@@ -1,5 +1,7 @@
 # How I Claude
 
+> Patterns, guardrails, and hard-won lessons from building with Claude Code every day.
+
 A battle-tested methodology for building reliable software with [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Developed over months of daily use across 9+ active projects — web apps, automation, infrastructure, and more.
 
 This isn't a tutorial. It's a system of patterns, conventions, and guardrails that solve real problems: context loss during long builds, security gaps, deployment failures, and the natural tendency of AI assistants to rationalize their own mistakes.
@@ -7,6 +9,24 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 **Take what's useful, ignore what isn't.** Each pattern stands on its own.
 
 > **Quick start:** Losing context mid-build? Start with [Context Survival](#context-survival). Shipping bugs? Start with [The Generator-Evaluator Pattern](#the-generator-evaluator-pattern). Want defense in depth? Start with [The 10-Stage Security Lifecycle](#the-10-stage-security-lifecycle).
+
+### Patterns at a Glance
+
+| Pattern | Problem It Solves | Section |
+|---------|-------------------|---------|
+| **The Planning Pipeline** | Scope creep, building before understanding | [Link](#the-planning-pipeline) |
+| **File-Based Progress Tracking** | Losing place after context compaction | [Link](#context-survival) |
+| **The Stack Frame Pattern** | Nested sub-plans causing parent plan amnesia | [Link](#nested-sub-plans-the-stack-frame-pattern) |
+| **Generator-Evaluator** | AI confidently approving its own broken code | [Link](#the-generator-evaluator-pattern) |
+| **Anti-Rationalization Rules** | Evaluators talking themselves into a pass | [Link](#anti-rationalization-rules) |
+| **10-Stage Security Lifecycle** | Forgetting security checks at any stage | [Link](#the-10-stage-security-lifecycle) |
+| **Path-Scoped Rules** | Forgetting domain-specific security context | [Link](#path-scoped-security-rules) |
+| **Three-Tier Permissions** | Too permissive or too restrictive tool access | [Link](#the-permission-model) |
+| **Red Lines** | Safety rules lost on context compaction | [Link](#red-lines) |
+| **Model Routing** | Overspending on cheap tasks, underpowering hard ones | [Link](#model-routing) |
+| **Learning Promotion Pipeline** | Lessons learned once, forgotten everywhere else | [Link](#the-learning-promotion-pipeline) |
+| **DNS-First Deployment** | NXDOMAIN caching breaking new subdomains | [Link](#dns-first-deployment) |
+| **Continuation Prompts** | "Where were we?" lag between sessions | [Link](#continuation-prompts) |
 
 ---
 
@@ -23,6 +43,7 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 - [The Permission Model](#the-permission-model)
 - [Model Routing](#model-routing)
 - [Implementation Reference](#implementation-reference)
+- [Starter Template](#starter-template)
 - [Security Note](#security-note)
 
 ---
@@ -667,6 +688,45 @@ Hooks are configured in `~/.claude/settings.json` and can be scoped by tool name
 4. **Separate generation from evaluation.** The AI that wrote the code shouldn't be the only one evaluating it.
 
 5. **Layer your defenses.** No single check catches everything.
+
+---
+
+## Starter Template
+
+A minimal CLAUDE.md you can drop into any project today. It covers the highest-value patterns without requiring the full setup:
+
+```markdown
+# Project Name
+
+## Code Standards
+- Functions under 40 lines; split if cyclomatic complexity exceeds 10
+- Never use display text (labels, button text) for program logic — use data attributes or state
+- Conventional Commits: feat:, fix:, docs:, refactor:, chore:
+- Never commit .env files, API keys, or credentials
+
+## Safety Rules
+<!-- These survive context compaction because they're in a file, not conversation -->
+- Never delete files or branches without asking
+- Never push to remote without asking
+- Never run destructive commands (rm -rf, git reset --hard, DROP TABLE)
+- Never send data to external services without asking
+
+## Planning
+- Non-trivial features: plan before coding (docs/plans/YYYY-MM-DD-feature.md)
+- Plans use checkboxes: - [ ] pending, - [~] in progress, - [x] done
+- Execute in batches of 3 tasks, pause for review between batches
+
+## Evaluation
+- After >10 lines changed: run build + lint + type-check + tests
+- Security header changes must be tested with a real browser, not curl
+- Before reporting done, check for cop-out language in your own output
+
+## Session Management
+- Log decisions AND rejected approaches
+- End sessions with a continuation prompt for next time
+```
+
+Adapt to your stack, add project-specific conventions, and grow it over time.
 
 ---
 
