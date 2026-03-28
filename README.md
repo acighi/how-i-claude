@@ -25,6 +25,10 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **Red Lines** | Safety rules lost on context compaction | [Link](#red-lines) |
 | **Model Routing** | Overspending on cheap tasks, underpowering hard ones | [Link](#model-routing) |
 | **Learning Promotion Pipeline** | Lessons learned once, forgotten everywhere else | [Link](#the-learning-promotion-pipeline) |
+| **False Positive Gates** | Alert fatigue from theoretical security findings | [Link](#false-positive-gates-for-high-findings) |
+| **Plans Are Living Documents** | Scope changes mid-plan causing stale tasks | [Link](#plans-are-living-documents) |
+| **Task Output Logs** | Losing mid-task position after compaction | [Link](#task-output-logs) |
+| **Staleness Check** | Knowledge files drifting from reality over time | [Link](#periodic-staleness-check) |
 | **DNS-First Deployment** | NXDOMAIN caching breaking new subdomains | [Link](#dns-first-deployment) |
 | **Continuation Prompts** | "Where were we?" lag between sessions | [Link](#continuation-prompts) |
 
@@ -165,6 +169,35 @@ Don't execute the entire plan in one go. Execute in batches of 3 tasks, then pau
 3. Wait for feedback before continuing
 
 This prevents runaway execution where the AI builds 10 tasks on a wrong foundation.
+
+### Plans Are Living Documents
+
+When new information changes the plan mid-execution, update the plan directly — rewrite remaining tasks to reflect reality. Don't preserve outdated tasks. The plan should always represent the current path forward.
+
+Add a changelog entry at the bottom explaining what changed and why:
+
+```markdown
+## Changelog
+- 2026-03-28 14:30: Tasks 5-6 rewritten — JWT library doesn't support RS256,
+  switching to ed25519. Original tasks in git history.
+```
+
+Git history captures the exact diff. The changelog captures the *why*. One file to read, one file to execute. Don't create separate amendment files — they require mental merging and add complexity without value for solo developers.
+
+### Task Output Logs
+
+While executing tasks, append timestamped work notes directly in the plan file:
+
+```markdown
+### Task 3: Authentication
+
+**Output log:**
+- 14:30 — Started. Created `src/auth/middleware.ts`, failing test written.
+- 14:35 — Test passes. Discovered JWT library needs v4+ for RS256. Installing.
+- 14:42 — JWT upgrade broke 2 existing tests. Fixing before proceeding.
+```
+
+This complements checkboxes (task-level status) with step-level detail. On resume after compaction, the output log tells you exactly where you stopped mid-task — not just which task, but which step within it.
 
 ---
 
@@ -403,6 +436,25 @@ A zero-dependency bash script installed in `.git/hooks/pre-commit` that scans st
 
 > **Note:** Build your own scanning patterns rather than copying them from public repos — published regex patterns can be studied and evaded. The approach matters more than the specific implementation.
 
+### False Positive Gates (for HIGH findings)
+
+Before reporting any finding as HIGH severity during audits, run through 6 verification gates. All must be YES to confirm. If any is NO, downgrade or skip.
+
+1. **Data flow proven?** — Can you trace untrusted input reaching the vulnerable sink through actual code paths?
+2. **Attacker can trigger?** — Is the vulnerable code reachable from an external interface?
+3. **Impact is real?** — Would exploitation cause actual harm (data leak, auth bypass, RCE)?
+4. **PoC credible?** — Can you describe a concrete attack scenario, not just "this pattern is risky"?
+5. **No other protections?** — Is there no upstream middleware, WAF, or framework protection?
+6. **Exploitable in practice?** — Given the deployment context (internal tool vs. public API), is this realistic?
+
+This prevents alert fatigue from theoretical findings. For findings in auth/payment/API files, add adversarial framing: "If an attacker with [access level] targets this, can they [specific exploit]?"
+
+### Static Analysis (optional layer)
+
+If you have [Semgrep](https://semgrep.dev/) installed, run its default security ruleset during quarterly audits. The default rules catch common patterns (SQL injection, XSS, hardcoded secrets) across many languages. Feed HIGH/ERROR findings through the False Positive Gates before including in the report.
+
+This is a one-off audit tool, not a permanent hook — generic rulesets produce too many false positives on small codebases to run on every file save.
+
 ---
 
 ## Code Quality Gates
@@ -539,6 +591,14 @@ flowchart LR
 4. **Not duplicate** — not already documented
 
 Learnings not reviewed in 90+ days get flagged for confirmation (never auto-deleted — you might need them).
+
+### Periodic Staleness Check
+
+At the end of each week (or every 2 weeks), scan your knowledge files — topic memories, learnings, CLAUDE.md sections. For each, ask: is this still accurate?
+
+Flag anything that looks stale: outdated tool versions, patterns superseded by new conventions, references to files that no longer exist. Update or remove. This should take under 60 seconds — don't force it if nothing looks questionable.
+
+Build it into your session-end routine so it happens automatically, not as a separate task you'll forget.
 
 ### Data Persistence Tiers
 
