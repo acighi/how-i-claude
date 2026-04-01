@@ -1097,6 +1097,8 @@ If you're accepting contributions to a repo that contains AI instruction files (
 
 Found a pattern that works? Open an issue or PR describing the pattern, what problem it solves, and how you validated it. The best patterns come from real-world usage, not theory.
 
+> **Note:** This repo is maintained for personal use. Issues and PRs are welcome but not guaranteed a response on any timeline.
+
 ---
 
 *Built by a solo developer shipping across 9+ projects. Every pattern here exists because something went wrong without it.*
