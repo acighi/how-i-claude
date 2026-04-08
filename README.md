@@ -2,7 +2,7 @@
 
 > Patterns, guardrails, and hard-won lessons from building with Claude Code every day.
 
-A battle-tested methodology for building reliable software with [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Developed over months of daily use across 9+ active projects — web apps, automation, infrastructure, and more.
+A battle-tested methodology for building reliable software with [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Developed over months of daily use across multiple active projects.
 
 This isn't a tutorial. It's a system of patterns, conventions, and guardrails that solve real problems: context loss during long builds, security gaps, deployment failures, and the natural tendency of AI assistants to rationalize their own mistakes.
 
@@ -19,6 +19,7 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **The Stack Frame Pattern** | Nested sub-plans causing parent plan amnesia | [Link](#nested-sub-plans-the-stack-frame-pattern) |
 | **Generator-Evaluator** | AI confidently approving its own broken code | [Link](#the-generator-evaluator-pattern) |
 | **Anti-Rationalization Rules** | Evaluators talking themselves into a pass | [Link](#anti-rationalization-rules) |
+| **Fix Discipline** | Applying fixes without understanding blast radius | [Link](#fix-discipline) |
 | **Correction Capture** | Same mistake repeated across sessions | [Link](#correction-capture) |
 | **Multi-Perspective Council** | Single-viewpoint bias on business decisions | [Link](#the-multi-perspective-council) |
 | **10-Stage Security Lifecycle** | Forgetting security checks at any stage | [Link](#the-10-stage-security-lifecycle) |
@@ -31,10 +32,8 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **Do It Yourself** | AI delegating work back to the developer | [Link](#the-do-it-yourself-principle) |
 | **Design Discovery** | Starting UI work without visual direction | [Link](#design-discovery) |
 | **Learning Promotion Pipeline** | Lessons learned once, forgotten everywhere else | [Link](#the-learning-promotion-pipeline) |
-| **False Positive Gates** | Alert fatigue from theoretical security findings | [Link](#false-positive-gates-for-high-findings) |
-| **Plans Are Living Documents** | Scope changes mid-plan causing stale tasks | [Link](#plans-are-living-documents) |
-| **Task Output Logs** | Losing mid-task position after compaction | [Link](#task-output-logs) |
 | **Staleness Check** | Knowledge files drifting from reality over time | [Link](#periodic-staleness-check) |
+| **Config Drift Guard** | Settings changes going uncommitted and diverging | [Link](#config-drift-guard) |
 | **DNS-First Deployment** | NXDOMAIN caching breaking new subdomains | [Link](#dns-first-deployment) |
 | **Continuation Prompts** | "Where were we?" lag between sessions | [Link](#continuation-prompts) |
 
@@ -46,6 +45,7 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 - [The Planning Pipeline](#the-planning-pipeline)
 - [Context Survival](#context-survival)
 - [The Generator-Evaluator Pattern](#the-generator-evaluator-pattern)
+- [Fix Discipline](#fix-discipline)
 - [Feedback Loops](#feedback-loops)
 - [The 10-Stage Security Lifecycle](#the-10-stage-security-lifecycle)
 - [Code Quality Gates](#code-quality-gates)
@@ -199,7 +199,7 @@ Add a changelog entry at the bottom explaining what changed and why:
   switching to ed25519. Original tasks in git history.
 ```
 
-Git history captures the exact diff. The changelog captures the *why*. One file to read, one file to execute. Don't create separate amendment files — they require mental merging and add complexity without value for solo developers.
+Git history captures the exact diff. The changelog captures the *why*.
 
 ### Task Output Logs
 
@@ -224,7 +224,7 @@ This complements checkboxes (task-level status) with step-level detail. On resum
 
 Claude Code compacts conversation context when it approaches the context window limit. After compaction, the AI loses track of where it was in a multi-step plan. This is especially bad when a plan step triggers a nested sub-plan — the AI dives into the sub-plan and forgets the parent plan entirely.
 
-In-memory task tracking (like TodoWrite) doesn't survive compaction. Conversation-only state is ephemeral.
+In-memory task tracking doesn't survive compaction. Conversation-only state is ephemeral.
 
 ### Solution: File-Based Progress Tracking
 
@@ -301,7 +301,7 @@ Agents read these files rather than relying on conversation context. Delete `doc
 | `docs/contracts/` | Always (on disk) | Acceptance criteria for evaluator |
 | Session logs | Always (on disk) | Decision history across sessions |
 | MEMORY.md | Always (reloaded every session) | Cross-session context |
-| In-memory tasks (TodoWrite) | **No** | Only within single context window |
+| In-memory tasks | **No** | Only within single context window |
 | Conversation history | **No** | Lost on compaction |
 
 ### PreCompact Hook
@@ -378,6 +378,50 @@ Match the tool to what you need to verify:
 | Quick pass/fail checks | Headless browser (Playwright) | Fast, low token cost |
 | Multi-step user journeys | E2E framework (Maestro/Cypress) | Declarative, reusable flows |
 | Security headers (CSP, CORS, HSTS) | **Real browser, not curl** | These headers are browser-enforced |
+
+---
+
+## Fix Discipline
+
+### The Problem
+
+A fix without understanding its blast radius is a guess. AI assistants — and developers — tend to apply the first plausible fix without tracing callers, checking for related tests, or considering downstream effects. The result: fixes that work in isolation but break something else.
+
+### The Impact Map (Before Every Fix)
+
+Before writing a single line of fix code, map the blast radius:
+
+```mermaid
+flowchart TD
+    BUG["Bug reported"] --> E["1. Identify epicenter<br/><i>file(s) and function(s)</i>"]
+    E --> CALLERS["2. Trace callers<br/><i>grep imports/usages</i>"]
+    E --> CALLEES["3. Trace callees<br/><i>read imports/deps</i>"]
+    E --> GIT["4. Check recent changes<br/><i>git log -10 per file</i>"]
+    E --> TESTS["5. Find related tests<br/><i>glob for test files</i>"]
+    CALLERS --> FIX["Apply fix"]
+    CALLEES --> FIX
+    GIT --> FIX
+    TESTS --> FIX
+```
+
+1. **Identify epicenter** — the file(s) and function(s) at the center of the bug
+2. **Trace callers** — grep for imports/usages across the project
+3. **Trace callees** — read imports to understand downstream dependencies
+4. **Check recent changes** — `git log --oneline -10 -- <each affected file>`
+5. **Find related tests** — glob for test files matching module names
+
+### Verify After Fix
+
+1. Run the failing test, then module tests, then caller tests from the impact map
+2. No tests exist → flag explicitly: "No test coverage — regression risk"
+3. Spawn a fix-reviewer agent in the background with: bug description, impact map, and git diff
+
+### Escalation — Automatic
+
+- **First fix fails** → invoke the debug pipeline immediately. No second attempt without structured debugging.
+- **3 failed attempts within the debug pipeline** → STOP. Flag to the developer as an architectural problem.
+
+This discipline applies to **bug fixes and unexpected behavior only** — not TDD red-green-refactor cycles where failures are expected.
 
 ---
 
@@ -543,13 +587,7 @@ Before reporting any finding as HIGH severity during audits, run through 6 verif
 5. **No other protections?** — Is there no upstream middleware, WAF, or framework protection?
 6. **Exploitable in practice?** — Given the deployment context (internal tool vs. public API), is this realistic?
 
-This prevents alert fatigue from theoretical findings. For findings in auth/payment/API files, add adversarial framing: "If an attacker with [access level] targets this, can they [specific exploit]?"
-
-### Static Analysis (optional layer)
-
-If you have [Semgrep](https://semgrep.dev/) installed, run its default security ruleset during quarterly audits. The default rules catch common patterns (SQL injection, XSS, hardcoded secrets) across many languages. Feed HIGH/ERROR findings through the False Positive Gates before including in the report.
-
-This is a one-off audit tool, not a permanent hook — generic rulesets produce too many false positives on small codebases to run on every file save.
+This prevents alert fatigue from theoretical findings.
 
 ---
 
@@ -569,7 +607,7 @@ Reviews run automatically at natural workflow moments. The developer never trigg
 
 ```mermaid
 flowchart TD
-    EV["/evaluate passes"] --> CR["Code Review Agent<br/><i>background, sonnet model</i><br/>80%+ confidence only"]
+    EV["/evaluate passes"] --> CR["Code Review Agent<br/><i>background, mid-tier model</i><br/>80%+ confidence only"]
     CR --> SC["Self-Checks<br/><i>parallel, before commit</i>"]
 
     subgraph SC["Pre-Commit Self-Checks (parallel)"]
@@ -582,7 +620,7 @@ flowchart TD
     SC --> COMMIT["Commit"]
 ```
 
-1. **After `/evaluate` passes** — code review agent runs in background (sonnet model). Only surfaces 80%+ confidence issues. Fix what you can, flag what you can't.
+1. **After `/evaluate` passes** — code review agent runs in background. Only surfaces 80%+ confidence issues. Fix what you can, flag what you can't.
 2. **Before every commit** — parallel self-checks: swallowed errors, anti-rationalization gate, bidirectional CLAUDE.md sync.
 3. **After major features** — suggest E2E test generation (don't auto-run).
 
@@ -597,7 +635,7 @@ These prevent classes of bugs, not just style issues:
 | **Delete from server, not just UI** | Archive/dismiss must hit the DB in the same request. Removing from a JS array only hides until refresh. |
 | **AI features are optional enhancements** | If an LLM API call fails, the tool must still work as manual CRUD. Never block a workflow on an AI response. |
 | **Functions under 40 lines** | Split if cyclomatic complexity exceeds 10. Smaller functions are easier to test and reason about. |
-| **Conventional Commits** | `feat:`, `fix:`, `docs:`, `refactor:`, `chore:` — machine-parseable, human-readable history. |
+| **Persist valuable data immediately** | If it took an API call, user input, or >2 seconds to generate — persist to DB. Server memory is not persistence. |
 
 ### Bidirectional CLAUDE.md Sync
 
@@ -649,7 +687,7 @@ Long-running background tasks (analysis, processing, generation) are silently ki
 
 ### Container Permission Gotcha
 
-When using host-mounted directories with non-root container users, the mount is owned by root. The app can't write to it (causes `SQLITE_READONLY_DIRECTORY` and similar errors). Fix: run the container as root, use an entrypoint script that `chown`s the data directory, then drops privileges to the app user with `exec su-exec <user> <command>`.
+When using host-mounted directories with non-root container users, the mount is owned by root. The app can't write to it. Fix: run the container as root, use an entrypoint script that `chown`s the data directory, then drops privileges to the app user with `exec su-exec <user> <command>`.
 
 ---
 
@@ -664,7 +702,7 @@ Lessons learned in one project don't propagate to others. The same mistake gets 
 Every work session gets a log entry with a specific structure:
 
 ```markdown
-## 2026-03-28 14:30 — Project Name
+## 2026-03-28 14:30 — Feature Name
 
 **Context:** What we were trying to do
 **Decisions:** What we chose and why
@@ -709,11 +747,17 @@ Learnings not reviewed in 90+ days get flagged for confirmation (never auto-dele
 
 ### Periodic Staleness Check
 
-At the end of each week (or every 2 weeks), scan your knowledge files — topic memories, learnings, CLAUDE.md sections. For each, ask: is this still accurate?
+Regularly scan your knowledge files — topic memories, learnings, CLAUDE.md sections. For each, ask: is this still accurate?
 
-Flag anything that looks stale: outdated tool versions, patterns superseded by new conventions, references to files that no longer exist. Update or remove. This should take under 60 seconds — don't force it if nothing looks questionable.
+Flag anything that looks stale: outdated tool versions, patterns superseded by new conventions, references to files that no longer exist. Update or remove. Build it into your session-end routine so it happens automatically, not as a separate task you'll forget.
 
-Build it into your session-end routine so it happens automatically, not as a separate task you'll forget.
+A dedicated `/memory-audit` skill can automate this — scanning topic files for mentions of files, skills, MCPs, or hooks that no longer exist and reporting findings before making changes.
+
+### Config Drift Guard
+
+A SessionStart hook that counts uncommitted changes in your `~/.claude/` directory and warns if the number exceeds a threshold (e.g., 10 files). This catches configuration drift — skills, rules, hooks, and settings that were modified during work sessions but never committed.
+
+Without this, your local config silently diverges from what's in version control. The `/save-and-move` session-end routine should include a mandatory check for uncommitted config changes.
 
 ### Data Persistence Tiers
 
@@ -761,7 +805,7 @@ Actions that should never happen without explicit permission, regardless of cont
 - **System:** Run sudo, install global packages, modify system files, kill processes without context
 - **Communication:** Send emails, messages, or notifications on the developer's behalf
 
-These rules must live in **persistent config** (CLAUDE.md), not conversation. Conversation-only rules get lost on context compaction — this was learned the hard way when an agent forgot a safety instruction after compaction and deleted an entire inbox.
+These rules must live in **persistent config** (CLAUDE.md), not conversation. Conversation-only rules get lost on context compaction — this was learned the hard way when an agent forgot a safety instruction after compaction and took a destructive action.
 
 ### The "Do It Yourself" Principle
 
@@ -786,10 +830,10 @@ Default to a capable but cost-efficient model for daily work. Escalate to the mo
 
 | Signal | Why It Needs Escalation |
 |--------|------------------------|
-| 5+ interacting constraints | Too many variables to hold in one pass |
+| 3+ interacting constraints | Too many variables to hold in one pass |
 | 2+ failed approaches | Problem likely needs deeper reasoning |
-| Cross-domain architecture (4+ files, frontend + backend + infra) | Coordination complexity |
-| Security audit with nuanced judgment | Stakes are too high for cheap model |
+| Cross-domain architecture (3+ modules across frontend + backend + infra) | Coordination complexity |
+| Security audit with nuanced judgment | Stakes are too high for a cheap model |
 | Contradictory requirements | Need to reconcile conflicting constraints |
 
 **Don't escalate for:** simple code edits, file search, config changes, git operations, debugging with clear error messages, single-file changes.
@@ -806,6 +850,10 @@ When delegating to subagents, match model to task type:
 | Multi-perspective synthesis | Best | Council chairman (reconciling contradictory arguments) |
 
 The evaluator is always the best model regardless of session model — that's where reasoning quality has the highest impact.
+
+### Mechanical Enforcement
+
+A hook can enforce model selection by blocking subagent calls that don't specify an explicit model parameter. This prevents accidental use of expensive models for trivial tasks and ensures the routing rules are followed consistently.
 
 ---
 
@@ -832,6 +880,7 @@ Skills are markdown-defined workflows that get loaded into context when invoked.
 | Skill | Purpose |
 |-------|---------|
 | `/evaluate` | Mechanical checks + independent evaluator agent |
+| `/debug` | Structured debugging pipeline with impact mapping and root cause investigation |
 | `/review` | Security-first code review on current branch |
 | `/e2e-tests` | Generate Gherkin scenarios + Playwright implementations |
 | `/deploy-check` | Pre-deployment checklist with secret scan + header check |
@@ -846,12 +895,13 @@ Skills are markdown-defined workflows that get loaded into context when invoked.
 | Skill | Purpose |
 |-------|---------|
 | `/save-and-move` | Save progress, run learning pipeline, generate continuation prompt |
+| `/memory-audit` | Detect stale references in knowledge files |
 | `/plan-sprint` | Sprint planning with security posture check |
 
 **Content & Documents:**
 | Skill | Purpose |
 |-------|---------|
-| `/presentation-generator` | HTML slides with dual outputs (1920x1080 PDF + responsive web) |
+| `/presentation-generator` | HTML slides with dual outputs (PDF + responsive web) |
 | `/contract-draft` | Full lifecycle contract drafting with review and redlines |
 | `/docx-tracked-changes` | Word docs with revision marks and comments |
 
@@ -859,7 +909,7 @@ Skills are markdown-defined workflows that get loaded into context when invoked.
 
 When starting UI work on a project with no established visual direction, the design-discovery skill auto-triggers:
 
-1. Generates 5 visual mockups in different directions (using design tools)
+1. Generates multiple visual mockups in different directions (using design tools)
 2. Presents them for the developer to pick a direction
 3. Saves the chosen theme tokens to the project
 4. Future UI work follows the established direction
@@ -873,13 +923,11 @@ Plugins extend Claude Code with curated skill sets from the community:
 | Plugin | Capabilities |
 |--------|-------------|
 | **superpowers** | Planning, brainstorming, debugging, TDD, code review, verification workflows |
-| **feature-dev** | Guided feature development with architecture focus |
 | **pr-review-toolkit** | PR review, comment analysis, silent failure hunting, type design analysis |
 | **hookify** | Create and manage hook rules from conversation analysis |
-| **coderabbit** | AI-powered code review |
-| **finance** | Journal entries, reconciliations, variance analysis, SOX testing |
 | **skill-creator** | Create, modify, and benchmark custom skills |
-| **playground** | Interactive HTML playgrounds for visual configuration |
+| **frontend-design** | Creative, production-grade UI design guidance |
+| **claude-md-management** | Audit and improve CLAUDE.md files |
 
 ### Building Your Own Skills
 
@@ -903,46 +951,23 @@ Context-switching between tools breaks flow. Checking deployment status in one b
 
 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers connect external tools directly to Claude Code. The AI can deploy apps, query dashboards, manage infrastructure, and access design files — all within the same conversation.
 
-**Infrastructure & Deployment:**
-| Server | Tools | Use For |
-|--------|-------|---------|
-| Coolify | 38 | Deploy apps, check logs, manage env vars, trigger rebuilds |
+**Categories of MCP integration:**
 
-**Design & UI:**
-| Server | Tools | Use For |
-|--------|-------|---------|
-| Figma | 15+ | Read designs, generate code from Figma files, Code Connect mappings |
-| Pencil | 12+ | Design mockups, style guides, export nodes |
-| Magic UI | 3 | Animated React + Tailwind component registry |
-| shadcn/ui | 8 | Component registry access |
+| Category | Examples | Tools |
+|----------|----------|-------|
+| Infrastructure & Deployment | Container orchestration, logs, env vars, rebuilds | 30-40 |
+| Design & UI | Design tools, style guides, component registries | 20-30 |
+| Browser Automation | Authenticated browsing, headless testing, E2E flows | 3 complementary tools |
+| Research & Documentation | Library docs, web search, crawling | 5-10 |
+| Business Tools | Email, calendar, spreadsheets, dashboards | Varies |
 
-**Browser Automation (3 complementary tools):**
-| Tool | Use For |
-|------|---------|
-| Claude in Chrome | Authenticated browsing, testing with real login sessions |
-| Playwright CLI | Headless quick checks, YAML snapshots |
-| Maestro | E2E flows, multi-step user journeys, mobile testing |
-
-**Routing rule:** Authenticated → Chrome. Quick checks → Playwright. E2E flows/mobile → Maestro. All browser ops serialized (never parallel).
-
-**Research & Documentation:**
-| Server | Use For |
-|--------|---------|
-| Context7 | Library/framework documentation (always current) |
-| Tavily | Web search, crawl, extract, research |
-| Microsoft Learn | Azure/Microsoft documentation |
-
-**Business Tools:**
-| Server | Use For |
-|--------|---------|
-| Google Workspace | Drive, Gmail, Calendar, Sheets, Docs (read-only scopes) |
-| Tableau | Dashboards, metrics, data queries |
+**Browser automation routing rule:** Authenticated → real browser with sessions. Quick checks → headless browser. E2E flows/mobile → dedicated E2E framework. All browser ops serialized (never parallel).
 
 ### MCP Security Model
 
-- **Auto-allowed** — infrastructure tools (Coolify, design tools, component registries)
-- **Per-call permission** — business tools (Google Workspace, Tableau) require approval each time
-- **Secrets in Keychain** — API tokens stored in macOS Keychain, pulled by wrapper scripts at launch. Never hardcoded in config files.
+- **Auto-allowed** — infrastructure tools, design tools, component registries
+- **Per-call permission** — business tools (email, calendar, docs) require approval each time
+- **Secrets in Keychain** — API tokens stored in OS keychain, pulled by wrapper scripts at launch. Never hardcoded in config files.
 
 ---
 
@@ -955,29 +980,30 @@ Context-switching between tools breaks flow. Checking deployment status in one b
 ├── CLAUDE.md              # Global preferences, standards, red lines
 ├── settings.json          # Hooks, permissions, deny rules
 ├── corrections.md         # Correction capture log (processed by /save-and-move)
-├── agents/                # Custom agent definitions
-│   ├── evaluator.md       # Independent functional tester (opus)
-│   ├── code-reviewer.md   # Quality review (sonnet)
+├── agents/                # Custom agent definitions (5-6 agents)
+│   ├── evaluator.md       # Independent functional tester (best model)
+│   ├── code-reviewer.md   # Quality review (mid-tier)
+│   ├── fix-reviewer.md    # Post-fix blast radius review (mid-tier)
 │   ├── quick-verify.md    # Parallel verification runner
-│   ├── context-gatherer.md # Session start context (haiku)
-│   └── parallel-audit.md  # Multi-project security scanning
-├── skills/                # Reusable workflow skills (~30 skills)
+│   └── context-gatherer.md # Session start context (cheapest)
+├── skills/                # Reusable workflow skills (~20 skills)
 │   ├── evaluate/          # Generator-evaluator pattern
+│   ├── debug/             # Structured debugging pipeline
 │   ├── review/            # Code review
 │   ├── deploy-check/      # Pre-deployment checklist
 │   ├── plan-sprint/       # Sprint planning
 │   ├── security-audit/    # Comprehensive security audit
 │   ├── save-and-move/     # Session save + learning pipeline
+│   ├── memory-audit/      # Staleness detection for knowledge files
 │   ├── council/           # Multi-perspective decision council
 │   ├── design-discovery/  # Visual design exploration
 │   ├── working-backwards/ # Product planning
-│   └── ...                # + ~20 more via plugins
+│   └── ...                # + more via plugins
 ├── rules/                 # Path-scoped auto-loading rules
-│   ├── security.md        # Infrastructure security (18 path patterns)
-│   ├── llm-security.md    # LLM/AI-specific security (9 path patterns)
+│   ├── security.md        # Infrastructure security patterns
+│   ├── llm-security.md    # LLM/AI-specific security patterns
 │   ├── browser-testing.md # Browser tool routing
-│   ├── typescript.md      # Language conventions
-│   └── python.md
+│   └── <language>.md      # Language-specific conventions
 └── projects/              # Per-project memory (auto-managed)
     └── <project>/memory/  # MEMORY.md + topic files
 
@@ -998,28 +1024,42 @@ Claude Code hooks fire at specific events. Here's what each event is good for:
 
 | Hook Event | Fires When | Use For |
 |------------|-----------|---------|
-| `SessionStart` | New conversation begins | Environment checks, orientation, loading context, correction history |
+| `SessionStart` | New conversation begins | Environment checks, orientation, loading context, config drift detection |
 | `PreToolUse` | Before a tool runs | Dependency install warnings, command validation, TDD guards |
-| `PostToolUse` | After a tool runs | Auto-formatting, secret scanning |
+| `PostToolUse` | After a tool runs | Auto-formatting, secret scanning, evaluate reminders |
 | `PreCompact` | Before context compaction | Saving in-flight state to disk |
 
 Hooks are configured in `~/.claude/settings.json` and can be scoped by tool name (e.g., only fire on `Edit` and `Write` tools).
 
 ### Custom Agents
 
-| Agent | Model | Purpose |
-|-------|-------|---------|
-| Evaluator | Best (opus) | Independent functional testing with anti-rationalization rules |
-| Code Reviewer | Mid-tier (sonnet) | Background quality review, 80%+ confidence threshold |
-| Quick Verify | Mid-tier (sonnet) | Parallel multi-criteria verification |
-| Context Gatherer | Cheapest (haiku) | Session start context loading |
-| Parallel Audit | Mid-tier (sonnet) | Multi-project security scanning |
+| Agent | Model Tier | Purpose |
+|-------|------------|---------|
+| Evaluator | Best | Independent functional testing with anti-rationalization rules |
+| Code Reviewer | Mid-tier | Background quality review, 80%+ confidence threshold |
+| Fix Reviewer | Mid-tier | Post-fix blast radius review — checks root cause coverage and caller impact |
+| Quick Verify | Mid-tier | Parallel multi-criteria verification |
+| Context Gatherer | Cheapest | Session start context loading |
+
+### Numbers at a Glance
+
+| Component | Count |
+|-----------|-------|
+| Allow rules | ~130 |
+| Deny rules | ~60 |
+| Hooks | 6 (across 4 event types) |
+| Skills | ~20 custom + ~20 via plugins |
+| Agents | 5-6 custom definitions |
+| Path-scoped rules | ~9 files |
+| Plugins | ~20 enabled |
+| MCP servers | 8-10 connected |
 
 ### Adoption Guide
 
 1. **Start with what hurts.** Don't implement everything at once.
    - Losing context? → [File-based progress tracking](#solution-file-based-progress-tracking)
    - Shipping bugs? → [Generator-evaluator pattern](#the-generator-evaluator-pattern)
+   - Fixes causing regressions? → [Fix discipline](#fix-discipline)
    - Security gaps? → [10-stage lifecycle](#the-10-stage-security-lifecycle)
    - Wasting on models? → [Model routing](#model-routing)
    - Same mistakes repeating? → [Correction capture](#correction-capture)
@@ -1061,6 +1101,11 @@ A minimal CLAUDE.md you can drop into any project today. It covers the highest-v
 - Plans use checkboxes: - [ ] pending, - [~] in progress, - [x] done
 - Execute in batches of 3 tasks, pause for review between batches
 
+## Fix Discipline
+- Before every fix: map blast radius (epicenter → callers → callees → tests)
+- After fix: run failing test, then module tests, then caller tests
+- First fix fails → structured debug pipeline. No second guesses.
+
 ## Evaluation
 - After >10 lines changed: run build + lint + type-check + tests
 - Security header changes must be tested with a real browser, not curl
@@ -1101,4 +1146,4 @@ Found a pattern that works? Open an issue or PR describing the pattern, what pro
 
 ---
 
-*Built by a solo developer shipping across 9+ projects. Every pattern here exists because something went wrong without it.*
+*Built by a solo developer shipping across multiple projects. Every pattern here exists because something went wrong without it.*
