@@ -34,6 +34,7 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **Learning Promotion Pipeline** | Lessons learned once, forgotten everywhere else | [Link](#the-learning-promotion-pipeline) |
 | **Staleness Check** | Knowledge files drifting from reality over time | [Link](#periodic-staleness-check) |
 | **Config Drift Guard** | Settings changes going uncommitted and diverging | [Link](#config-drift-guard) |
+| **Assumption Verification** | AI silently applying training data as fact | [Link](#assumption-verification) |
 | **DNS-First Deployment** | NXDOMAIN caching breaking new subdomains | [Link](#dns-first-deployment) |
 | **Continuation Prompts** | "Where were we?" lag between sessions | [Link](#continuation-prompts) |
 
@@ -49,6 +50,7 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 - [Feedback Loops](#feedback-loops)
 - [The 10-Stage Security Lifecycle](#the-10-stage-security-lifecycle)
 - [Code Quality Gates](#code-quality-gates)
+- [Assumption Verification](#assumption-verification)
 - [Deployment Patterns](#deployment-patterns)
 - [Knowledge Management](#knowledge-management)
 - [The Permission Model](#the-permission-model)
@@ -643,6 +645,94 @@ When code changes affect conventions, architecture, or project structure — upd
 
 ---
 
+## Assumption Verification
+
+### The Problem
+
+AI assistants silently apply training data as fact. When editing a file that integrates with an external API, the AI assumes the response shape, auth method, or error format based on "industry standard" patterns — not your actual system. Three categories of wrong assumptions:
+
+1. **Library/API behavior** — assumed defaults that changed between versions
+2. **Infrastructure state** — assumed environment variables, DNS records, or service configurations that don't match reality
+3. **Business logic** — assumed user flows or domain rules that aren't documented in code
+
+The cost isn't the wrong assumption itself — it's the rework cycle. The AI writes code confidently, tests pass locally, and the bug surfaces in production or integration testing. By then, understanding the assumption requires re-reading the code path.
+
+### The Assumption Taxonomy
+
+Classify every assumption the AI makes about systems outside the current codebase:
+
+| Type | Source | Action |
+|------|--------|--------|
+| **Stated** | Developer explicitly said it | Proceed — ground truth |
+| **Inferred** | Read from code/config/docs this session | Proceed but mention the source |
+| **Assumed** | Training data / "industry standard" | **Must verify before implementing** |
+| **Uncertain** | No evidence either way | **Must ask the developer** |
+
+The dangerous type is **Assumed** — it feels confident because it matches training data, but training data is generic. Your project's Cloudflare configuration, API versioning, or database schema is not generic.
+
+### Defense in Depth (4 Layers)
+
+No single mechanism catches all silent assumptions. Layer them:
+
+```mermaid
+flowchart TB
+    subgraph PLAN["Planning Time"]
+        L1["Layer 1: Plan Exit Review<br/><i>Assumptions Register in every plan</i>"]
+    end
+
+    subgraph IMPL["Implementation Time"]
+        L2["Layer 2: CLAUDE.md Self-Check Rule<br/><i>6 triggers to stop and verify</i>"]
+        L3["Layer 3: PostToolUse Hook<br/><i>mechanical nudge on external-system files</i>"]
+    end
+
+    subgraph RETRO["Retrospective"]
+        L4["Layer 4: Session-End Pattern Collection<br/><i>self-calibrating pattern list</i>"]
+    end
+
+    PLAN --> IMPL --> RETRO
+    L4 -.->|"adds new patterns"| L3
+```
+
+**Layer 1 — Assumptions Register (planning gate).** During plan review, extract every assumption about external systems. Classify each using the taxonomy above. Any **Assumed** or **Uncertain** items that can't be verified during review become blockers on the tasks that depend on them.
+
+```markdown
+## Assumptions Register
+| # | Assumption | Type | Verified? | Action |
+|---|-----------|------|-----------|--------|
+| 1 | CF Pages uses SHA-256 for asset hashing | Assumed | No | Must verify before Task 3 |
+| 2 | Database schema has `users.email` column | Inferred | Yes | Read from schema.sql |
+| 3 | Webhook payload includes `event_type` field | Uncertain | No | Ask developer |
+```
+
+**Layer 2 — Self-check triggers (CLAUDE.md rule).** Six conditions where the AI should stop and verify before proceeding:
+
+1. Using knowledge not from this session (training data is not fact for your project)
+2. First time touching this area of the codebase
+3. Inferring behavior from naming conventions instead of reading code
+4. External system behavior (APIs, libraries, services, infrastructure)
+5. Business logic intent ("I can see *what* the code does, never *why*")
+6. Own uncertainty signals ("should be", "probably", "typically")
+
+This is judgment-based — it fades with context compaction. That's why it needs the mechanical layers below.
+
+**Layer 3 — PostToolUse hook (mechanical nudge).** A hook that fires on every file edit, checking whether the filename matches patterns associated with external systems (e.g., `api`, `client`, `webhook`, `auth`, `config`, `deploy`). When it matches, it emits a short reminder:
+
+> "This file likely interacts with an external system. Have you verified your assumptions about its behavior?"
+
+This survives context compaction because it's a hook, not a conversation instruction. It's a nudge, not a gate — it reminds rather than blocks.
+
+**Layer 4 — Self-calibrating pattern list.** At session end, scan the session log for rework signals ("fixed", "wrong", "actually", "turns out", "assumed"). For each rework event involving an external system, check whether the filename would have triggered the Layer 3 hook. If not, propose adding a new pattern.
+
+Periodically review proposals: add confirmed patterns, remove stale ones that haven't triggered in 30+ days. The pattern list evolves based on real misses, not theoretical coverage.
+
+### Scope
+
+Only gate decisions that are **expensive to reverse** — cross-system integrations, external API calls, infrastructure state, business logic. Don't gate code-internal work, styling, refactoring within a module, or following an established pattern already verified this session.
+
+The goal is preventing costly rework, not adding friction to every edit.
+
+---
+
 ## Deployment Patterns
 
 ### DNS-First Deployment
@@ -986,14 +1076,19 @@ Context-switching between tools breaks flow. Checking deployment status in one b
 │   ├── fix-reviewer.md    # Post-fix blast radius review (mid-tier)
 │   ├── quick-verify.md    # Parallel verification runner
 │   └── context-gatherer.md # Session start context (cheapest)
+├── hooks/                 # PostToolUse / PreToolUse hook scripts
+│   ├── assumption-check.sh        # Layer 3: nudge on external-system files
+│   ├── assumption-check-patterns.txt  # Pattern list (self-calibrating)
+│   └── assumption-check-proposals.txt # Proposed new patterns from sessions
 ├── skills/                # Reusable workflow skills (~20 skills)
+│   ├── check-assumptions/ # Mid-session assumption surfacing
 │   ├── evaluate/          # Generator-evaluator pattern
 │   ├── debug/             # Structured debugging pipeline
 │   ├── review/            # Code review
 │   ├── deploy-check/      # Pre-deployment checklist
 │   ├── plan-sprint/       # Sprint planning
 │   ├── security-audit/    # Comprehensive security audit
-│   ├── save-and-move/     # Session save + learning pipeline
+│   ├── save-and-move/     # Session save + learning pipeline + pattern collection
 │   ├── memory-audit/      # Staleness detection for knowledge files
 │   ├── council/           # Multi-perspective decision council
 │   ├── design-discovery/  # Visual design exploration
