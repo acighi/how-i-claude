@@ -37,6 +37,7 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **Assumption Verification** | AI silently applying training data as fact | [Link](#assumption-verification) |
 | **DNS-First Deployment** | NXDOMAIN caching breaking new subdomains | [Link](#dns-first-deployment) |
 | **Continuation Prompts** | "Where were we?" lag between sessions | [Link](#continuation-prompts) |
+| **Session Handoff Files** | Context degradation across multi-session builds | [Link](#session-handoff-files) |
 
 ---
 
@@ -813,6 +814,84 @@ Next up: (1) fix W, (2) add tests for Y, (3) deploy."
 ```
 
 Next session starts by reading this prompt and orienting automatically — no "where were we?" lag. A SessionStart hook can display this automatically.
+
+But continuation prompts are deliberately brief (1-2 sentences). For complex, multi-session work, you need more context than "we were working on X." That's what handoff files solve.
+
+### Session Handoff Files
+
+#### The Problem
+
+Continuation prompts carry enough to *orient* — but not enough to *resume*. After a long session where you explored three approaches, rejected two, made five decisions, and left two open questions, the next session starts with: "Last session: worked on auth. Next: finish auth." That's a lossy summary. The new session re-explores a rejected approach, re-asks a settled question, or misses an open thread.
+
+Context compaction makes this worse. Even within a single session, compaction can drop the reasoning behind decisions while preserving the decisions themselves.
+
+#### The Pattern
+
+At the end of each session, write a dedicated handoff file (`docs/handoff.md`) that captures full working context — not just what was done, but what was tried, what was rejected and why, what's still unresolved, and what the current deployment state is.
+
+```markdown
+# Session Handoff
+> Last updated: 2026-04-10T16:30 by session-end routine
+
+## What happened
+Implemented the authentication middleware. Switched from JWT to
+session tokens after discovering JWT refresh added 3 round trips.
+
+## Active plan
+`docs/plans/auth-implementation.md` — 3/5 tasks complete
+
+## Key decisions
+- Session tokens over JWT — fewer round trips, simpler invalidation
+- Redis for session store — already in the stack, sub-ms lookups
+- 24h expiry with sliding window — balances security and UX
+
+## Rejected approaches
+- JWT with refresh tokens: 3 extra round trips per request, complex
+  rotation logic, couldn't revoke individual sessions without a
+  blocklist (which defeats the purpose of stateless JWT)
+- Cookie-only auth: blocked by cross-origin API requirements
+
+## Open questions
+- Should session store fall back to DB if Redis is down, or fail fast?
+- Rate limiting strategy for the login endpoint not yet decided
+
+## What's next
+1. Implement session middleware (Task 4 in plan)
+2. Add rate limiting to login endpoint
+3. Write integration tests for session expiry
+
+## Current state
+- Auth routes merged to main, not yet deployed
+- Redis session store running locally, not provisioned in prod
+```
+
+**Key rules:**
+- **Overwrite each session** — the file always reflects current state, not accumulated history
+- **Include rejected approaches** — this is the highest-value field. "We tried X and it failed because Y" prevents the next session from re-exploring dead ends
+- **Include open questions** — unresolved items that need answers. Without this, they silently drop
+- **Keep it 50-100 lines** — enough to resume with full context, short enough to read in one pass
+- **Commit it to git** — it's part of the project, visible in the repo, survives machine changes
+
+The continuation prompt in MEMORY.md then becomes a brief orient plus a pointer:
+
+```
+"Last session: auth middleware. Full context: docs/handoff.md"
+```
+
+The handoff file carries the detail. MEMORY.md stays lean.
+
+#### Why This Works
+
+Session logs record history (append-only, never edited). Handoff files record **current state** (overwritten each session). They serve different purposes:
+
+| | Session Log | Handoff File |
+|---|---|---|
+| **Updated** | Appended each session | Overwritten each session |
+| **Contains** | What happened (historical) | What to do next (current) |
+| **Primary use** | Searching past decisions | Resuming work |
+| **Lifespan** | Permanent archive | Current until next session |
+
+Build the handoff file write into your session-end routine (e.g., `/save-and-move`), using the same conversation context that feeds the session log. The handoff file is just a richer, forward-looking extract of the same material.
 
 ### The Learning Promotion Pipeline
 
