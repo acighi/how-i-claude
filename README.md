@@ -35,9 +35,12 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **Staleness Check** | Knowledge files drifting from reality over time | [Link](#periodic-staleness-check) |
 | **Config Drift Guard** | Settings changes going uncommitted and diverging | [Link](#config-drift-guard) |
 | **Assumption Verification** | AI silently applying training data as fact | [Link](#assumption-verification) |
+| **Performance Audit** | No systematic way to measure and track app performance | [Link](#performance-audit) |
 | **DNS-First Deployment** | NXDOMAIN caching breaking new subdomains | [Link](#dns-first-deployment) |
 | **Continuation Prompts** | "Where were we?" lag between sessions | [Link](#continuation-prompts) |
 | **Session Handoff Files** | Context degradation across multi-session builds | [Link](#session-handoff-files) |
+| **Chesterton's Fence** | Removing code without understanding why it exists | [Link](#chestertons-fence) |
+| **Scope Flagging** | Fixing unrelated issues and losing focus on the task | [Link](#scope-flagging) |
 
 ---
 
@@ -52,6 +55,7 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 - [The 10-Stage Security Lifecycle](#the-10-stage-security-lifecycle)
 - [Code Quality Gates](#code-quality-gates)
 - [Assumption Verification](#assumption-verification)
+- [Performance Audit](#performance-audit)
 - [Deployment Patterns](#deployment-patterns)
 - [Knowledge Management](#knowledge-management)
 - [The Permission Model](#the-permission-model)
@@ -244,7 +248,9 @@ Progress is tracked directly in plan files using checkboxes:
 **Rules:**
 1. Before starting a task, mark it `- [~]` (in progress) in the plan file
 2. After completing a task, mark it `- [x]` (done)
-3. On resume (after compaction or new session): read the plan file, find the first unchecked task — that's where you pick up
+3. If a task is deliberately skipped (scope change, turned out unnecessary, blocked), mark it `- [SKIPPED] reason` — don't leave it unchecked
+4. On resume (after compaction or new session): read the plan file, find the first unchecked task — that's where you pick up
+5. **Completion verification:** Before reporting a plan as done, verify every checkbox is either `[x]` or `[SKIPPED]`. Unchecked items are either unfinished work or unacknowledged scope changes — both need resolution
 
 ### Nested Sub-Plans (The Stack Frame Pattern)
 
@@ -307,11 +313,25 @@ Agents read these files rather than relying on conversation context. Delete `doc
 | In-memory tasks | **No** | Only within single context window |
 | Conversation history | **No** | Lost on compaction |
 
-### PreCompact Hook
+### PreCompact Hook — Active Handoff
 
-A hook that fires before context compaction can save a snapshot of what was in-flight — which files were changed, what branch you're on. This creates an audit trail, not a recovery mechanism.
+A hook that fires before context compaction can do more than log — it can trigger an active handoff:
 
-The key lesson: **anything important must already be on disk before compaction triggers.** The PreCompact hook is a safety net, not a primary strategy. Write progress to plan files as you go.
+1. **Mechanical capture** (bash script): Save git state, branch, uncommitted changes, plan progress, and previous handoff to a state file (`docs/.precompact-state.md`)
+2. **Behavioral rule** (CLAUDE.md): Instruct the AI to immediately write `docs/handoff.md` when it receives the compaction signal — capturing what happened, active plan status, key decisions, rejected approaches, open questions, and next steps
+
+The behavioral rule lives in CLAUDE.md (not just the hook output) so it **survives compaction itself**. The hook's output message may get compacted away, but the CLAUDE.md rule persists and tells the AI what to do with the mechanical data.
+
+```mermaid
+flowchart LR
+    PC["PreCompact hook fires"] --> MS["Mechanical state capture<br/><i>git, plans, prev handoff</i>"]
+    PC --> BI["Behavioral instruction<br/><i>'write handoff NOW'</i>"]
+    MS --> HF["docs/handoff.md<br/><i>AI writes full context</i>"]
+    BI --> HF
+    HF --> NX["Next session reads<br/>handoff on start"]
+```
+
+The key lesson: **anything important must already be on disk before compaction triggers.** The PreCompact hook is a safety net for what isn't. Write progress to plan files as you go — but when compaction comes unexpectedly, the active handoff captures everything the plan files don't.
 
 ---
 
@@ -640,6 +660,24 @@ These prevent classes of bugs, not just style issues:
 | **Functions under 40 lines** | Split if cyclomatic complexity exceeds 10. Smaller functions are easier to test and reason about. |
 | **Persist valuable data immediately** | If it took an API call, user input, or >2 seconds to generate — persist to DB. Server memory is not persistence. |
 
+### Chesterton's Fence
+
+Before removing code during refactoring, run `git blame` to understand why it was added. If the commit message and context don't explain the reason, ask before deleting. Code that looks dead may handle an edge case, work around a vendor bug, or satisfy a regulatory requirement.
+
+AI assistants are especially prone to removing code they don't understand — they see unused-looking functions or commented-out blocks and clean them up. The cost of asking "why is this here?" is zero. The cost of removing a regulatory workaround is not.
+
+### Scope Flagging
+
+When the AI notices issues outside the current task scope worth fixing (bugs, security gaps, broken logic — not cosmetic), it should flag them instead of fixing:
+
+```
+NOTICED BUT NOT TOUCHING: [issue] — [why it's out of scope]
+```
+
+This prevents scope creep while ensuring real issues don't go unnoticed. Offer to create tasks for flagged items after the current work is done.
+
+The temptation — for both AI and developers — is to "just fix this while I'm here." But drive-by fixes skip the impact map, skip tests, and introduce risk unrelated to the current task. Flag now, fix properly later.
+
 ### Bidirectional CLAUDE.md Sync
 
 When code changes affect conventions, architecture, or project structure — update CLAUDE.md. Don't just follow CLAUDE.md; keep it current. It's a living document, not a stale reference.
@@ -731,6 +769,58 @@ Periodically review proposals: add confirmed patterns, remove stale ones that ha
 Only gate decisions that are **expensive to reverse** — cross-system integrations, external API calls, infrastructure state, business logic. Don't gate code-internal work, styling, refactoring within a module, or following an established pattern already verified this session.
 
 The goal is preventing costly rework, not adding friction to every edit.
+
+---
+
+## Performance Audit
+
+### The Problem
+
+Performance issues accumulate silently. Without systematic measurement, you don't know if your app is fast or slow until users complain. One-off Lighthouse runs catch some issues but miss backend performance, memory leaks, build bloat, and data efficiency.
+
+### 7-Dimension Framework
+
+Measure performance across seven dimensions to get a complete picture. No single metric tells the whole story.
+
+| Dimension | What It Measures | Key Metrics | Tools |
+|-----------|-----------------|-------------|-------|
+| **1. Page Load** | How fast content appears | LCP, FCP, Speed Index, TBT | Lighthouse |
+| **2. Rendering** | How smooth interactions feel | TBT (lab proxy for INP), DOM size, layout shifts | Lighthouse |
+| **3. Data Efficiency** | How much bandwidth is wasted | Transfer size, compression ratio, cache hit rates | curl, browser devtools |
+| **4. API Response** | How fast the backend responds | TTFB, endpoint latency, p95 response times | curl with timing |
+| **5. Build** | How long builds and deploys take | Build time, bundle size, tree-shaking effectiveness | Framework CLI |
+| **6. Memory** | Whether the app leaks memory | Heap size, detached DOM nodes, listener count over time | Browser devtools |
+| **7. Asset Optimization** | Whether static assets are optimized | Image formats, font loading, CSS/JS minification | Lighthouse, custom checks |
+
+### Pre-Measurement Gates
+
+Before measuring, verify two things:
+
+1. **Tool availability** — check that measurement tools (Lighthouse, load testing tools) are installed. If not, install them before proceeding. Never skip a dimension because a tool is missing — that creates blind spots in the audit.
+
+2. **Production-like environment** — detect whether you're measuring against a dev server (hot reloading, unminified bundles, debug logging). Dev server measurements are unreliable. Measure against production or a production-like build.
+
+### Coverage Gaps Reporting
+
+Not every dimension is measurable for every project. When something can't be measured (e.g., no auth token available for protected endpoints, static site has no API), report it as an explicit coverage gap — don't silently skip it.
+
+```markdown
+## Coverage Gaps
+- API Response (Dim 4): Protected endpoints not tested — no auth token available
+- Memory (Dim 6): Requires manual browser profiling — automated measurement not reliable
+```
+
+Making gaps visible prevents false confidence. "We measured 5/7 dimensions" is honest. "Everything looks fine" when you only checked 3 dimensions is dangerous.
+
+### Scoring and Tracking
+
+Score each dimension on a 1-5 scale with clear thresholds. Track scores over time — a dimension that was 4/5 last month and is 3/5 now indicates a regression worth investigating.
+
+Run performance audits:
+- Before major releases
+- After significant dependency updates
+- When users report slowness
+- Periodically (monthly for production apps)
 
 ---
 
@@ -1054,6 +1144,8 @@ Skills are markdown-defined workflows that get loaded into context when invoked.
 | `/e2e-tests` | Generate Gherkin scenarios + Playwright implementations |
 | `/deploy-check` | Pre-deployment checklist with secret scan + header check |
 | `/security-audit` | Comprehensive 6-step audit (dependencies, configs, access, secrets) |
+| `/performance-audit` | 7-dimension performance measurement with coverage gap reporting |
+| `/check-assumptions` | Mid-session assumption surfacing and verification |
 
 **Decision & Analysis:**
 | Skill | Purpose |
@@ -1155,10 +1247,14 @@ Context-switching between tools breaks flow. Checking deployment status in one b
 │   ├── fix-reviewer.md    # Post-fix blast radius review (mid-tier)
 │   ├── quick-verify.md    # Parallel verification runner
 │   └── context-gatherer.md # Session start context (cheapest)
-├── hooks/                 # PostToolUse / PreToolUse hook scripts
+├── hooks/                 # Hook scripts (15+ scripts across event types)
 │   ├── assumption-check.sh        # Layer 3: nudge on external-system files
 │   ├── assumption-check-patterns.txt  # Pattern list (self-calibrating)
-│   └── assumption-check-proposals.txt # Proposed new patterns from sessions
+│   ├── assumption-check-proposals.txt # Proposed new patterns from sessions
+│   ├── agent-model-guard.sh       # Enforce model parameter on subagent calls
+│   ├── precompact.sh              # Active handoff: state capture + handoff instruction
+│   ├── config-drift-guard.sh      # SessionStart: warn on uncommitted config changes
+│   └── ...                        # + compound-command-guard, impact-map-guard, etc.
 ├── skills/                # Reusable workflow skills (~20 skills)
 │   ├── check-assumptions/ # Mid-session assumption surfacing
 │   ├── evaluate/          # Generator-evaluator pattern
@@ -1172,6 +1268,10 @@ Context-switching between tools breaks flow. Checking deployment status in one b
 │   ├── council/           # Multi-perspective decision council
 │   ├── design-discovery/  # Visual design exploration
 │   ├── working-backwards/ # Product planning
+│   ├── performance-audit/ # 7-dimension performance measurement
+│   ├── check-assumptions/ # Mid-session assumption surfacing
+│   ├── presentation-generator/ # HTML slides with PDF + responsive output
+│   ├── contract-draft/    # Legal contract drafting with review cycles
 │   └── ...                # + more via plugins
 ├── rules/                 # Path-scoped auto-loading rules
 │   ├── security.md        # Infrastructure security patterns
@@ -1187,7 +1287,9 @@ Context-switching between tools breaks flow. Checking deployment status in one b
 │   ├── plans/             # Implementation plans (with checkboxes)
 │   ├── contracts/         # Acceptance criteria (from plan review)
 │   ├── tasks/             # Active execution state (nested sub-plans)
-│   └── build-state/       # Evaluator reports (deleted after merge)
+│   ├── build-state/       # Evaluator reports (deleted after merge)
+│   ├── handoff.md         # Session handoff (overwritten each session)
+│   └── .precompact-state.md # Mechanical state from last compaction
 └── .git/hooks/
     └── pre-commit         # Secret scanning hook
 ```
@@ -1201,9 +1303,14 @@ Claude Code hooks fire at specific events. Here's what each event is good for:
 | `SessionStart` | New conversation begins | Environment checks, orientation, loading context, config drift detection |
 | `PreToolUse` | Before a tool runs | Dependency install warnings, command validation, TDD guards |
 | `PostToolUse` | After a tool runs | Auto-formatting, secret scanning, evaluate reminders |
-| `PreCompact` | Before context compaction | Saving in-flight state to disk |
+| `PreCompact` | Before context compaction | Active handoff — capture state + instruct AI to write handoff file |
+| `SubagentStart` | When a subagent is spawned | Model routing enforcement (verify correct model for task type) |
+| `Stop` | When the AI stops generating | Post-completion verification triggers |
+| `UserPromptSubmit` | When the developer sends a message | Input validation, context injection |
 
-Hooks are configured in `~/.claude/settings.json` and can be scoped by tool name (e.g., only fire on `Edit` and `Write` tools).
+Hooks are configured in `~/.claude/settings.json` and can be scoped by tool name (e.g., only fire on `Edit` and `Write` tools). Use the `if` field to filter by command pattern — e.g., a PostToolUse hook on `Bash` with `if: "Bash(git commit *)"` only fires on commits, avoiding unnecessary hook executions on every shell command.
+
+**Gotcha: catch-all matchers.** An empty `""` matcher fires on *every* tool call. This is powerful for global hooks (notifications, logging) but dangerous if the hook script is missing or broken — it generates an error on every single tool action. Prefer scoped matchers (`"Bash"`, `"Edit|Write"`) unless you genuinely need every tool call.
 
 ### Custom Agents
 
@@ -1219,12 +1326,12 @@ Hooks are configured in `~/.claude/settings.json` and can be scoped by tool name
 
 | Component | Count |
 |-----------|-------|
-| Allow rules | ~130 |
-| Deny rules | ~60 |
-| Hooks | 6 (across 4 event types) |
-| Skills | ~20 custom + ~20 via plugins |
-| Agents | 5-6 custom definitions |
-| Path-scoped rules | ~9 files |
+| Allow rules | ~140 |
+| Deny rules | ~55 |
+| Hooks | 15 scripts across 4 event types |
+| Skills | ~22 custom + ~20 via plugins |
+| Agents | 6 custom definitions |
+| Path-scoped rules | 11 files |
 | Plugins | ~20 enabled |
 | MCP servers | 8-10 connected |
 
@@ -1237,6 +1344,8 @@ Hooks are configured in `~/.claude/settings.json` and can be scoped by tool name
    - Security gaps? → [10-stage lifecycle](#the-10-stage-security-lifecycle)
    - Wasting on models? → [Model routing](#model-routing)
    - Same mistakes repeating? → [Correction capture](#correction-capture)
+   - Performance unknown? → [Performance audit](#performance-audit)
+   - Scope creep during fixes? → [Scope flagging](#scope-flagging)
 
 2. **Automate the boring stuff.** If you have to remember to do it, you'll forget. Put it in a hook.
 
@@ -1260,6 +1369,8 @@ A minimal CLAUDE.md you can drop into any project today. It covers the highest-v
 ## Code Standards
 - Functions under 40 lines; split if cyclomatic complexity exceeds 10
 - Never use display text (labels, button text) for program logic — use data attributes or state
+- Before removing code during refactoring, git blame to understand why it exists
+- Flag out-of-scope issues ("NOTICED BUT NOT TOUCHING: [issue]") instead of fixing them
 - Conventional Commits: feat:, fix:, docs:, refactor:, chore:
 - Never commit .env files, API keys, or credentials
 
