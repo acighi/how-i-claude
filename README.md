@@ -41,6 +41,8 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **Session Handoff Files** | Context degradation across multi-session builds | [Link](#session-handoff-files) |
 | **Chesterton's Fence** | Removing code without understanding why it exists | [Link](#chestertons-fence) |
 | **Scope Flagging** | Fixing unrelated issues and losing focus on the task | [Link](#scope-flagging) |
+| **Informational Hooks** | Blunt guards create friction; blocking everything prevents flow | [Link](#informational-hooks--context-over-blocking) |
+| **Periodic Harness Audit** | Config, tools, and published patterns drift silently | [Link](#periodic-harness-audit) |
 
 ---
 
@@ -1012,6 +1014,22 @@ Flag anything that looks stale: outdated tool versions, patterns superseded by n
 
 A dedicated `/memory-audit` skill can automate this — scanning topic files for mentions of files, skills, MCPs, or hooks that no longer exist and reporting findings before making changes.
 
+### Periodic Harness Audit
+
+Memory staleness is one axis; the harness itself drifts on others: new hook events ship, new model versions arrive, settings fields get added, published documentation claims start lagging reality. None of these surface in day-to-day work — you only notice when something breaks or when you happen to look.
+
+The pattern: a manually-invoked `/harness-audit` skill that, at run time, dispatches a research agent to scan authoritative sources (platform docs, release notes, model pages), mid-trust sources (the vendor's engineering blog, official examples repo), and a curated handful of community repos. The research agent returns a compact delta: what's new, what deprecated. A second phase snapshots the current config and compares.
+
+Output is a three-bucket report:
+
+- **Adopt** — clear wins, low risk, fits the developer's profile
+- **Consider** — tradeoff exists; surface for judgment
+- **Skip for you** — ecosystem is doing this; doesn't fit this shape; logged so it doesn't re-surface
+
+Plus a drift section that explicitly compares live config against the developer's own *published* patterns — the "what I say I do" gap. This is the section that catches writing-bit-rot.
+
+**Caveats** (this pattern is new and evolving): the research-at-run-time design is the expensive part — expect 30-60k tokens per scan. Worth it for quarterly-ish cadence, too expensive for weekly. The first scan surfaces a lot; subsequent scans surface much less.
+
 ### Config Drift Guard
 
 A SessionStart hook that counts uncommitted changes in your `~/.claude/` directory and warns if the number exceeds a threshold (e.g., 10 files). This catches configuration drift — skills, rules, hooks, and settings that were modified during work sessions but never committed.
@@ -1113,6 +1131,20 @@ The evaluator is always the best model regardless of session model — that's wh
 ### Mechanical Enforcement
 
 A hook can enforce model selection by blocking subagent calls that don't specify an explicit model parameter. This prevents accidental use of expensive models for trivial tasks and ensures the routing rules are followed consistently.
+
+### Effort Escalation Protocol
+
+Modern Claude models expose an "effort" setting that trades tokens for reasoning depth (low → medium → high → extended). Higher effort levels emit more thinking tokens, billed as output, which can be 5× the cost of input tokens. Pinning the highest effort globally is wasteful — most turns don't need it.
+
+The pattern:
+
+- **Session default:** high effort (good reasoning, reasonable cost)
+- **Escalate immediately before** spawning a deep-reasoning subagent (evaluator, contrarian review, architecture synthesis for 3+ constraints)
+- **Drop back** to the default after the subagent returns
+
+Think of effort escalation like the subagent model routing — tiered by signal, not pinned. The discipline is the same: match the cost to the actual reasoning complexity of the task.
+
+**Watch for the silent drift:** effort settings persist in config files (`settings.json`), so a one-time toggle can quietly stay pinned across every session. Periodic config audits catch this (see [Periodic Harness Audit](#periodic-harness-audit)).
 
 ---
 
@@ -1304,6 +1336,7 @@ Claude Code hooks fire at specific events. Here's what each event is good for:
 | `PreToolUse` | Before a tool runs | Dependency install warnings, command validation, TDD guards |
 | `PostToolUse` | After a tool runs | Auto-formatting, secret scanning, evaluate reminders |
 | `PreCompact` | Before context compaction | Active handoff — capture state + instruct AI to write handoff file |
+| `PostCompact` | After context compaction | Log compaction event + verify pre-compact handoff landed |
 | `SubagentStart` | When a subagent is spawned | Model routing enforcement (verify correct model for task type) |
 | `Stop` | When the AI stops generating | Post-completion verification triggers |
 | `UserPromptSubmit` | When the developer sends a message | Input validation, context injection |
@@ -1311,6 +1344,19 @@ Claude Code hooks fire at specific events. Here's what each event is good for:
 Hooks are configured in `~/.claude/settings.json` and can be scoped by tool name (e.g., only fire on `Edit` and `Write` tools). Use the `if` field to filter by command pattern — e.g., a PostToolUse hook on `Bash` with `if: "Bash(git commit *)"` only fires on commits, avoiding unnecessary hook executions on every shell command.
 
 **Gotcha: catch-all matchers.** An empty `""` matcher fires on *every* tool call. This is powerful for global hooks (notifications, logging) but dangerous if the hook script is missing or broken — it generates an error on every single tool action. Prefer scoped matchers (`"Bash"`, `"Edit|Write"`) unless you genuinely need every tool call.
+
+### Informational Hooks — Context Over Blocking
+
+Most hook advice focuses on *blocking*: guard against risky commands, prevent destructive actions, enforce red lines. But hooks have a second useful shape — **informational hooks** that surface context *before* a permission prompt fires, without blocking anything.
+
+Example: before a `git push` permission prompt, a PreToolUse hook reads the git state and prints to stderr: remote URL, branch, commit count ahead, last commit subject. The prompt still fires normally. The developer sees "push 3 commits to `origin/main`, last: `feat: X`" and one-tap approves with real awareness — or notices they're on the wrong branch and cancels.
+
+The pattern:
+- Hook exits 0 (never blocks)
+- Writes to stderr (visible pre-prompt)
+- Gathers context the developer would otherwise have to assemble mentally
+
+**Companion pattern — whitelist to reduce false-block friction.** A guard that blocks *all* compound commands (`&&`, `|`, subshells) teaches the developer to work around it by writing temp scripts — but the whole point of the guard was to prevent permission-prompt spam, and single-pipe-to-read-only-filter cases (`ls | head`, `cat x | jq`) are already in most allow-lists. Refine the guard to allow those exact cases; block only the compound operators that actually trigger prompts. Blunt guards get ignored or disabled; surgical guards get respected.
 
 ### Custom Agents
 
@@ -1328,7 +1374,7 @@ Hooks are configured in `~/.claude/settings.json` and can be scoped by tool name
 |-----------|-------|
 | Allow rules | ~140 |
 | Deny rules | ~55 |
-| Hooks | 15 scripts across 4 event types |
+| Hooks | 15 scripts across 5+ event types (Claude Code exposes 26 events; these are the most useful) |
 | Skills | ~22 custom + ~20 via plugins |
 | Agents | 6 custom definitions |
 | Path-scoped rules | 11 files |
