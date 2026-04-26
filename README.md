@@ -1190,6 +1190,7 @@ Skills are markdown-defined workflows that get loaded into context when invoked.
 | `/save-and-move` | Save progress, run learning pipeline, generate continuation prompt |
 | `/memory-audit` | Detect stale references in knowledge files |
 | `/plan-sprint` | Sprint planning with security posture check |
+| `/harness-audit` | Periodic config + ecosystem audit (research delta + drift report) |
 
 **Content & Documents:**
 | Skill | Purpose |
@@ -1333,15 +1334,19 @@ Claude Code hooks fire at specific events. Here's what each event is good for:
 | Hook Event | Fires When | Use For |
 |------------|-----------|---------|
 | `SessionStart` | New conversation begins | Environment checks, orientation, loading context, config drift detection |
-| `PreToolUse` | Before a tool runs | Dependency install warnings, command validation, TDD guards |
+| `PreToolUse` | Before a tool runs | Dependency install warnings, command validation, subagent model-routing enforcement (matcher: `Agent`) |
 | `PostToolUse` | After a tool runs | Auto-formatting, secret scanning, evaluate reminders |
 | `PreCompact` | Before context compaction | Active handoff — capture state + instruct AI to write handoff file |
 | `PostCompact` | After context compaction | Log compaction event + verify pre-compact handoff landed |
-| `SubagentStart` | When a subagent is spawned | Model routing enforcement (verify correct model for task type) |
-| `Stop` | When the AI stops generating | Post-completion verification triggers |
+| `PermissionDenied` | A tool call is denied (matcher: tool name) | Detect denial-then-pivot patterns at the moment they happen, instead of post-hoc transcript scanning |
+| `Stop` | When the AI stops generating | Post-completion verification triggers, git discipline checks |
+| `SessionEnd` | Session ends (matcher: `clear\|logout\|prompt_input_exit\|other`) | Save-and-move reminders, uncommitted-changes warnings |
+| `StopFailure` | Generation halts on a recoverable error (matcher: `rate_limit\|authentication_failed\|billing_error\|invalid_request\|server_error\|max_output_tokens\|unknown`) | Categorised error logging |
 | `UserPromptSubmit` | When the developer sends a message | Input validation, context injection |
 
-Hooks are configured in `~/.claude/settings.json` and can be scoped by tool name (e.g., only fire on `Edit` and `Write` tools). Use the `if` field to filter by command pattern — e.g., a PostToolUse hook on `Bash` with `if: "Bash(git commit *)"` only fires on commits, avoiding unnecessary hook executions on every shell command.
+The full hook event surface is larger (~27 events including `InstructionsLoaded`, `ConfigChange`, `FileChanged`, `WorktreeCreate/Remove`, etc.) — the table above lists the high-value subset most setups use.
+
+Hooks are configured in `~/.claude/settings.json` and can be scoped by tool name (e.g., only fire on `Edit` and `Write` tools). Use the `if` field to filter by command pattern — e.g., a PostToolUse hook on `Bash` with `if: "Bash(git commit *)"` only fires on commits, avoiding unnecessary hook executions on every shell command. For subagent dispatching, use `PreToolUse` with `matcher: "Agent"` — that's where model-routing enforcement and word-cap checks belong.
 
 **Gotcha: catch-all matchers.** An empty `""` matcher fires on *every* tool call. This is powerful for global hooks (notifications, logging) but dangerous if the hook script is missing or broken — it generates an error on every single tool action. Prefer scoped matchers (`"Bash"`, `"Edit|Write"`) unless you genuinely need every tool call.
 
@@ -1365,8 +1370,10 @@ The pattern:
 | Evaluator | Best | Independent functional testing with anti-rationalization rules |
 | Code Reviewer | Mid-tier | Background quality review, 80%+ confidence threshold |
 | Fix Reviewer | Mid-tier | Post-fix blast radius review — checks root cause coverage and caller impact |
+| Parallel Audit | Mid-tier | Multi-project security scanning across active projects |
 | Quick Verify | Mid-tier | Parallel multi-criteria verification |
 | Context Gatherer | Cheapest | Session start context loading |
+| Session Scanner | Cheapest | Parses session state files (corrections, pending log) for the save-and-move skill |
 
 ### Numbers at a Glance
 
@@ -1374,11 +1381,11 @@ The pattern:
 |-----------|-------|
 | Allow rules | ~140 |
 | Deny rules | ~55 |
-| Hooks | 15 scripts across 5+ event types (Claude Code exposes 26 events; these are the most useful) |
-| Skills | ~22 custom + ~20 via plugins |
-| Agents | 6 custom definitions |
-| Path-scoped rules | 11 files |
-| Plugins | ~20 enabled |
+| Hooks | ~25 scripts across 6+ event types (Claude Code exposes ~27 events; these are the most useful) |
+| Skills | ~25 custom + ~20 via plugins |
+| Agents | 7 custom definitions |
+| Path-scoped rules | ~15 files |
+| Plugins | ~15 enabled |
 | MCP servers | 8-10 connected |
 
 ### Adoption Guide
