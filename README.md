@@ -42,6 +42,9 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **Chesterton's Fence** | Removing code without understanding why it exists | [Link](#chestertons-fence) |
 | **Scope Flagging** | Fixing unrelated issues and losing focus on the task | [Link](#scope-flagging) |
 | **Informational Hooks** | Blunt guards create friction; blocking everything prevents flow | [Link](#informational-hooks--context-over-blocking) |
+| **Two-Phase Hook Migrations** | Replacing a working hook silently regresses safety; need evidence before retiring | [Link](#two-phase-hook-migrations) |
+| **Conditional Reminders** | Always-on reminders become noise even on the sessions that need them | [Link](#conditional-session-end-reminders) |
+| **Machine-Readable Conventions** | Prose conventions in CLAUDE.md drift away from settings.json the platform actually reads | [Link](#make-conventions-machine-readable) |
 | **Periodic Harness Audit** | Config, tools, and published patterns drift silently | [Link](#periodic-harness-audit) |
 
 ---
@@ -985,6 +988,20 @@ Session logs record history (append-only, never edited). Handoff files record **
 
 Build the handoff file write into your session-end routine (e.g., `/save-and-move`), using the same conversation context that feeds the session log. The handoff file is just a richer, forward-looking extract of the same material.
 
+### Conditional Session-End Reminders
+
+A blunt "run /save-and-move at end of every session" rule trains you to ignore it on read-only sessions where there's nothing to save. Eventually you ignore it on the sessions that *did* need it, too. The fix: a `SessionEnd` hook that nudges *only when the trigger applies* — when the session produced commits and the session log file wasn't updated in the last hour.
+
+```bash
+# Pseudocode
+recent_commit  = git log --since="60 min ago" --oneline (across all tracked projects)
+log_updated    = git log --since="60 min ago" --oneline -- sessions/$(date +%Y-%m).md
+if recent_commit and not log_updated:
+  echo "💾 Recent commits detected but no /save-and-move entry today."
+```
+
+The pattern generalises: every "remember to do X at the end" rule that's worth automating should fire only when the trigger actually applies. Always-on reminders become background noise. Conditional reminders stay credible.
+
 ### The Learning Promotion Pipeline
 
 Not every lesson belongs in global config. A four-gate pipeline prevents premature promotion:
@@ -1327,6 +1344,15 @@ Context-switching between tools breaks flow. Checking deployment status in one b
     └── pre-commit         # Secret scanning hook
 ```
 
+### Make Conventions Machine-Readable
+
+When CLAUDE.md prose says "plans live in `docs/plans/`", also set the equivalent `settings.json` field (e.g. `"plansDirectory": "docs/plans"`). Two reasons:
+
+1. **Native features find the right place.** Future Claude Code features (TUI plan views, IDE integrations, subagent plan handoffs) read settings, not prose. Setting the field once means every feature lands automatically aligned with your convention.
+2. **Drift detection becomes mechanical.** A periodic config audit can compare prose conventions against settings fields. If they diverge — prose says one thing, settings says another — the audit surfaces it.
+
+The general rule: every convention worth following is worth declaring in both prose (CLAUDE.md, for the humans) and config (settings.json, for the machines). The cost is one line of JSON. The payoff is automatic alignment as the platform evolves.
+
 ### Hook Lifecycle
 
 Claude Code hooks fire at specific events. Here's what each event is good for:
@@ -1362,6 +1388,18 @@ The pattern:
 - Gathers context the developer would otherwise have to assemble mentally
 
 **Companion pattern — whitelist to reduce false-block friction.** A guard that blocks *all* compound commands (`&&`, `|`, subshells) teaches the developer to work around it by writing temp scripts — but the whole point of the guard was to prevent permission-prompt spam, and single-pipe-to-read-only-filter cases (`ls | head`, `cat x | jq`) are already in most allow-lists. Refine the guard to allow those exact cases; block only the compound operators that actually trigger prompts. Blunt guards get ignored or disabled; surgical guards get respected.
+
+### Two-Phase Hook Migrations
+
+When a new hook event lets you replace an older hook with a more accurate or efficient one, don't swap directly. Run both in parallel for ~1 week with the new hook in **log-only mode** — no user-visible output, just appends to a file. At the end of the week, diff the new log against what the old hook caught:
+
+- **Detections match cleanly** → retire the old hook, promote the new one to active mode
+- **New hook misses cases** → keep the old one, treat the new one as a supplementary signal
+- **New hook catches *more* than the old** → promote the new one and document what was being missed
+
+Why this works: hooks are part of the safety surface, and silent regressions are exactly the failure mode you can't observe by code-review alone. Running both concurrently for a week generates the evidence to retire the old one with confidence. Costs ~5 minutes of post-week analysis; prevents days of flying blind on a behaviour change that isn't visible until something fails.
+
+Real example: migrating from a Stop-hook that scans turn transcripts for "denial → pivot" patterns to a native `PermissionDenied` event. The new hook fires per-denial in real time; the old one fires once per turn. Whether that granularity difference matters in practice is exactly what the parallel week reveals — and you don't have to guess.
 
 ### Custom Agents
 
