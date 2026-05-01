@@ -1031,6 +1031,21 @@ Flag anything that looks stale: outdated tool versions, patterns superseded by n
 
 A dedicated `/memory-audit` skill can automate this — scanning topic files for mentions of files, skills, MCPs, or hooks that no longer exist and reporting findings before making changes.
 
+### Auto-Consolidating Memory
+
+Knowledge files accumulate near-duplicates over time. Two sessions both observe "always run tests before committing" and both write a `feedback_*.md` file. A few weeks in, the topic directory has half a dozen overlapping entries — and at session start, the AI loads them all, paying the token cost on every turn for content that should have been one consolidated file.
+
+The pattern, fully automatic and reversible:
+
+1. **Detect on write.** A `PostToolUse` hook fires whenever a memory file is created or edited. It scans the topic directory for near-duplicates of the just-touched file using lightweight similarity heuristics (filename token overlap, content N-gram comparison). If candidates appear, it queues a consolidation request.
+2. **Snapshot before merge.** Before any consolidation runs, snapshot the affected files into a side-channel git repository. Every action is reversible by checking out the snapshot — this is what makes "automatic" safe.
+3. **Subagent decides the merge.** A best-tier subagent reads the candidate files and returns a structured decision per group: merge into a single file, keep distinct (with reasoning), or flag as ambiguous for the developer. The decision schema is strict so the orchestrator can apply high-confidence merges without further review.
+4. **Apply, archive, log.** Approved merges write the consolidated file, archive the originals (don't delete — keep them in an `archive/` subdirectory for audit), and append a single line to a consolidation log. On the developer's next session start, MEMORY.md still resolves correctly because it points at the consolidated file.
+
+What makes this work: every step has an explicit fallback. Hook fails → no consolidation, business as usual. Subagent low-confidence → flag, don't act. Merge produces wrong output → snapshot rollback. The default is *safe*, not *clever*.
+
+What this doesn't do: it doesn't merge across projects (each project's memory is self-contained), and it doesn't run on every save (the hook batches via a debounce file to avoid runaway costs). The point is incremental tidying, not aggressive rewriting.
+
 ### Periodic Harness Audit
 
 Memory staleness is one axis; the harness itself drifts on others: new hook events ship, new model versions arrive, settings fields get added, published documentation claims start lagging reality. None of these surface in day-to-day work — you only notice when something breaks or when you happen to look.
@@ -1089,6 +1104,20 @@ Why:   [why it's needed for the current task]
 Scope: [what it touches — which server, repo, file, service]
 Risk:  [what could go wrong — data loss, external visibility, irreversibility]
 ```
+
+### Visual Cue Palette
+
+Terminal output is a wall of monospace text. By the time a "your-turn" moment scrolls past, the developer has already lost it. A small, **strict** vocabulary of color-coded emoji turns scannability from "read every line carefully" into "spot the marker, react." The rule: each emoji means *exactly one thing* — never repurpose, never decorate.
+
+| Emoji | Meaning | Where it appears |
+|-------|---------|------------------|
+| 🔶 | **Run this yourself** | Header above any block where the developer must run a command manually (red-line crossed, hook-blocked, externally-visible side effect) |
+| 🟢 | **Recommended / high confidence** | Prefix on the recommended option in a 2–4 option menu — one per menu, max |
+| 🟡 | **Caution / heads-up** | A tradeoff or thing-to-consider before a decision (softer than 🛑 — "think about this," not "stop") |
+| 🛑 | **Blocker / irreversible** | Hard stop, red line crossed, or expensive-to-undo cost line above the menu |
+| 🔵 | **Question awaiting answer** | When the AI stops and asks — the next message must be a reply, not another tool call |
+
+The colors are deliberate: orange = your hands needed, green = safe go, yellow = think, red = stop, blue = your turn. All five render well on dark and light terminals. Use sparingly — every marker should be a real action moment, not decoration. If markers start appearing in routine status updates, they've become noise and the convention dies.
 
 ### Red Lines
 
@@ -1206,6 +1235,7 @@ Skills are markdown-defined workflows that get loaded into context when invoked.
 |-------|---------|
 | `/save-and-move` | Save progress, run learning pipeline, generate continuation prompt |
 | `/memory-audit` | Detect stale references in knowledge files |
+| `/memory-consolidate` | Auto-merge near-duplicate memory files via subagent decisions; snapshot + reversible archive |
 | `/plan-sprint` | Sprint planning with security posture check |
 | `/harness-audit` | Periodic config + ecosystem audit (research delta + drift report) |
 
@@ -1364,7 +1394,9 @@ Claude Code hooks fire at specific events. Here's what each event is good for:
 | `PostToolUse` | After a tool runs | Auto-formatting, secret scanning, evaluate reminders |
 | `PreCompact` | Before context compaction | Active handoff — capture state + instruct AI to write handoff file |
 | `PostCompact` | After context compaction | Log compaction event + verify pre-compact handoff landed |
-| `PermissionDenied` | A tool call is denied (matcher: tool name) | Detect denial-then-pivot patterns at the moment they happen, instead of post-hoc transcript scanning |
+| `PermissionRequest` | A permission dialog is about to be shown (matcher: tool name) | Log the structured `permission_suggestions` payload (rules + behavior + destination) at request-time. Richer than transcript scanning — see [Two-Phase Hook Migrations](#two-phase-hook-migrations) |
+| `PermissionDenied` | A tool call is denied by the auto-mode classifier (matcher: tool name) | Per-event denial logging for auto-mode rejections. Note: does **not** fire on settings.json deny-rules, manual prompt denials, or PreToolUse hook blocks — those need a Stop-hook backstop |
+| `PostToolBatch` | A parallel tool batch resolves | Aggregate timing/observability across fan-out calls (e.g. parallel-audit, council) |
 | `Stop` | When the AI stops generating | Post-completion verification triggers, git discipline checks |
 | `SessionEnd` | Session ends (matcher: `clear\|logout\|prompt_input_exit\|other`) | Save-and-move reminders, uncommitted-changes warnings |
 | `StopFailure` | Generation halts on a recoverable error (matcher: `rate_limit\|authentication_failed\|billing_error\|invalid_request\|server_error\|max_output_tokens\|unknown`) | Categorised error logging |
@@ -1399,7 +1431,12 @@ When a new hook event lets you replace an older hook with a more accurate or eff
 
 Why this works: hooks are part of the safety surface, and silent regressions are exactly the failure mode you can't observe by code-review alone. Running both concurrently for a week generates the evidence to retire the old one with confidence. Costs ~5 minutes of post-week analysis; prevents days of flying blind on a behaviour change that isn't visible until something fails.
 
-Real example: migrating from a Stop-hook that scans turn transcripts for "denial → pivot" patterns to a native `PermissionDenied` event. The new hook fires per-denial in real time; the old one fires once per turn. Whether that granularity difference matters in practice is exactly what the parallel week reveals — and you don't have to guess.
+Real example, two rounds:
+
+1. **Round 1:** `PermissionDenied` event added alongside the Stop-hook transcript scanner. After a week, the parallel logs revealed `PermissionDenied` only fires for auto-mode classifier denials — *not* for settings.json deny-rules, manual prompt rejections, or PreToolUse hook blocks. **Decision: keep both** as defense in depth, each catching a different denial type.
+2. **Round 2:** `PermissionRequest` event piloted (richer than `PermissionDenied` — fires before the dialog with structured `permission_suggestions` containing tool, rules, behavior, destination). Goal: retire the transcript scanner for the standard-prompt-denial case once the structured payload is verified to give equivalent or better detection.
+
+The two-phase discipline is what makes the difference: the first round looked like a clean win on paper, but the parallel week exposed the scope limitation before any safety regression landed.
 
 ### Custom Agents
 
@@ -1417,12 +1454,12 @@ Real example: migrating from a Stop-hook that scans turn transcripts for "denial
 
 | Component | Count |
 |-----------|-------|
-| Allow rules | ~140 |
-| Deny rules | ~55 |
-| Hooks | ~25 scripts across 6+ event types (Claude Code exposes ~27 events; these are the most useful) |
+| Allow rules | ~170 |
+| Deny rules | ~70 |
+| Hooks | ~35 scripts across 8+ event types (Claude Code exposes ~30 events; these are the most useful) |
 | Skills | ~25 custom + ~20 via plugins |
 | Agents | 7 custom definitions |
-| Path-scoped rules | ~15 files |
+| Path-scoped rules | ~20 files |
 | Plugins | ~15 enabled |
 | MCP servers | 8-10 connected |
 
