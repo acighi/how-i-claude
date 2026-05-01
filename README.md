@@ -26,6 +26,7 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **Path-Scoped Rules** | Forgetting domain-specific security context | [Link](#path-scoped-security-rules) |
 | **Three-Tier Permissions** | Too permissive or too restrictive tool access | [Link](#the-permission-model) |
 | **Red Lines** | Safety rules lost on context compaction | [Link](#red-lines) |
+| **Pre-emptive Self-Run Routing** | Friction loop when AI proposes commands the harness will categorically deny | [Link](#pre-emptive-self-run-routing) |
 | **Model Routing** | Overspending on cheap tasks, underpowering hard ones | [Link](#model-routing) |
 | **Skills & Plugins Ecosystem** | Reinventing workflows every session | [Link](#the-skills--plugins-ecosystem) |
 | **MCP Integration Layer** | Manual context-switching between external tools | [Link](#mcp-integration-layer) |
@@ -1129,6 +1130,47 @@ Actions that should never happen without explicit permission, regardless of cont
 - **Communication:** Send emails, messages, or notifications on the developer's behalf
 
 These rules must live in **persistent config** (CLAUDE.md), not conversation. Conversation-only rules get lost on context compaction — this was learned the hard way when an agent forgot a safety instruction after compaction and took a destructive action.
+
+### Pre-emptive Self-Run Routing
+
+Some commands are categorically destined to fail before the AI tries them — a production deploy script, a `launchctl` write, a `gh pr create`, a push to a protected repo. The AI proposes the tool call, the harness denies it (deny pattern or guard hook), and now the AI is in a friction loop: scaffold a variant, retry, eventually punt to the developer manually. Each loop costs tokens and time, and the pivot to a scaffold can drift the intent ("we couldn't push, so we wrote a doc instead").
+
+The fix: when a command falls into a known-deny category, skip the tool call entirely. Emit a `! <command>` block — the `!` prefix runs the command in the same terminal session, so output still lands in the conversation context.
+
+**Categories that always route to self-run from the first attempt:**
+- All `rm` (when hard-denied at the harness layer)
+- Production / staging deploy scripts (`bash scripts/deploy-prod.sh`, etc.)
+- `lftp` mirror invocations; `rsync` / `scp` to remote hosts
+- `launchctl` write ops (`load`, `unload`, `bootstrap`, `enable`, `disable`, `kickstart`)
+- `gh` writes — `gh pr create|edit|merge|close|review|comment`, `gh issue create|edit|close`, `gh release`, `gh repo create|edit|delete`, `gh api -X POST|PUT|PATCH|DELETE`
+- `docker push`, `npm publish`
+- Pushes to repos with org-level write protection
+
+**Output format:**
+
+```
+🔶 RUN THIS YOURSELF
+! <command>
+What:  <plain English of what runs>
+Why:   <why now, in the current task>
+Scope: <which system/host/path it touches>
+Risk:  <plain English — destructive? externally visible? reversible?>
+```
+
+The 🔶 marker (your-hands-needed) makes it scannable. What/Why/Scope/Risk is the same structure as ask-first prompts, so the developer's mental model stays consistent.
+
+**Length cap — wrap long commands in a temp script.** If the command would exceed ~60 characters (half a terminal line), don't paste it inline. Write a self-contained script to `scripts/tmp-<short-name>.sh` and emit `! bash scripts/tmp-<short-name>.sh`. Long inline commands break across terminal lines and are awkward to copy-paste; a named script also leaves an artifact the developer can inspect or re-run.
+
+**Backstop hook.** A PreToolUse hook (`preempt-self-run-guard.sh`) hard-blocks tool calls matching the known-deny categories and instructs the AI to re-emit as a self-run block. This catches regressions when the AI forgets the rule or a new variant slips through. The text rule is primary; the hook is a safety net.
+
+**Criteria for adding a new category** (use these instead of re-deriving each time):
+1. **Externally visible side effect** — pushes to remote, registry publishes, partner notifications, shared-infra writes
+2. **Already hard-denied** by deny patterns or a guard hook (so the tool call is destined to fail anyway)
+3. **Consistent manual-approval preference** — the prompt is reliably a friction event, not a real decision
+
+Plus: the pattern must be specific enough not to catch read-only siblings (e.g., `gh pr create` not `gh pr view`; `docker push` not `docker pull`). Anchor patterns at statement-start so `echo gh pr create` doesn't match.
+
+This is a complement to ask-first prompts, not a replacement. Ask-first is for "this might be okay, you decide." Self-run routing is for "this won't be allowed, here's the manual path." Treating them as the same thing creates the friction loop this pattern exists to prevent.
 
 ### The "Do It Yourself" Principle
 
