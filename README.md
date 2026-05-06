@@ -47,6 +47,9 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **Conditional Reminders** | Always-on reminders become noise even on the sessions that need them | [Link](#conditional-session-end-reminders) |
 | **Machine-Readable Conventions** | Prose conventions in CLAUDE.md drift away from settings.json the platform actually reads | [Link](#make-conventions-machine-readable) |
 | **Periodic Harness Audit** | Config, tools, and published patterns drift silently | [Link](#periodic-harness-audit) |
+| **Gate Agents** | Replace single-option "continue?" / "fix all?" rubber-stamp asks with cheap soft-check agents | [Link](#gate-agents-at-workflow-transitions) |
+| **Fail-Open with Chat-Ask** | Agent unavailable shouldn't halt the workflow when hard checks still hold | [Link](#agent-unavailable-fallback) |
+| **Plain-English Decision Menus** | A/B/C menus full of jargon force re-reading and slow decisions | [Link](#plain-english-decision-menus) |
 
 ---
 
@@ -60,6 +63,7 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 - [Feedback Loops](#feedback-loops)
 - [The 10-Stage Security Lifecycle](#the-10-stage-security-lifecycle)
 - [Code Quality Gates](#code-quality-gates)
+- [Gate Agents at Workflow Transitions](#gate-agents-at-workflow-transitions)
 - [Assumption Verification](#assumption-verification)
 - [Performance Audit](#performance-audit)
 - [Deployment Patterns](#deployment-patterns)
@@ -690,6 +694,98 @@ When code changes affect conventions, architecture, or project structure — upd
 
 ---
 
+## Gate Agents at Workflow Transitions
+
+### The Problem
+
+Workflows have natural transition points — finishing a commit before pushing, finishing a plan task before starting the next, finishing a code review before deciding what to fix. The instinct at each transition is to ask the developer: "Push now?", "Continue with Task 4?", "Fix all 7 issues?". Every one of those asks is a rubber-stamp: the developer answers "yes" 100% of the time, the question only adds friction, and the AI uses the ask as a fake checkpoint to feel cautious without actually verifying anything.
+
+The fix isn't to remove the checkpoint. It's to replace the developer-facing ask with a cheap soft-check agent that does the verification mechanically and surfaces a verdict.
+
+### The Pattern
+
+Spawn a cheap-tier agent (haiku or equivalent) at the transition point. It runs:
+
+- **Mechanical checks (M)** — binary, deterministic. Did the secret-scan diff pass? Is the next plan task in scope? Are there any other in-progress tasks left dangling?
+- **Soft checks (S)** — judgment-flavored. Does the commit message match the diff? Does this finding require a human decision vs. obvious auto-fix?
+
+The agent returns a structured verdict — `PROCEED`, `HALT(reason)`, or a 3-bucket classification — and the calling session acts on it without re-asking the developer.
+
+```mermaid
+flowchart LR
+    T["Workflow transition<br/>(commit, plan flip, review done)"] --> A["Cheap-tier gate agent<br/><i>haiku, ~5s</i>"]
+    A --> M["Mechanical checks<br/><i>scan diff, scope, prereqs</i>"]
+    A --> S["Soft checks<br/><i>vague commit?, hedged finding?</i>"]
+    M --> V{"Verdict"}
+    S --> V
+    V -->|PROCEED| NX["Next step runs<br/>(no ask)"]
+    V -->|HALT| H["Surface reason,<br/>wait for direction"]
+    V -->|TRIAGE| B["Auto-fix / Decide / Log"]
+```
+
+### Three Worked Examples
+
+**1. Pre-push gate.** After every commit on a solo project, before the standard `git push` permission prompt, a haiku agent reviews the commit. M-checks: secret patterns in the diff (regex + binary credential filenames), pre-commit hook present, deny patterns satisfied. S-checks: vague commit message ("wip", "fixes"), plan-scope drift (commit touches files outside the active plan), infra-file flags (settings.json, hook scripts). On `PASS`, push proceeds straight to the standard prompt. On `FLAG`, push proceeds with reasons attached. On `FAIL`, push is blocked with a specific blocker. The chat-level "Push now?" rubber-stamp ask is gone.
+
+**2. Plan-step readiness gate.** A `PostToolUse` hook fires when a plan checkbox flips from `[~]` to `[x]`. A sonnet agent reads the plan file and checks: are there other `[~]` tasks left dangling (race-condition guard)? Is the next task's scope still aligned with what's been built? Are its prerequisites met? On `PROCEED`, the AI marks the next task `[~]` and starts work — skipping the "Continue with Task N+1?" ask. On `HALT`, the AI surfaces the reason and waits.
+
+**3. Code-review triage.** After a code-reviewer agent returns findings, a sonnet triage agent classifies each into three buckets: **Auto-fixing now** (obvious safe fixes — typos, missing null checks the reviewer is 95%+ confident about), **For your decision** (security, architectural, or hedged findings — require human judgment), **Logged only** (style nits, low-confidence false positives). Auto-fixes apply immediately; decision items surface with a 🛑 prefix; logged items go to the session log. The "Fix all 7 findings?" ask becomes "applied 4, you decide 2, logged 1."
+
+### Rule Precedence Inside Triage
+
+When a finding fits multiple buckets, classify by safety, not by confidence:
+
+| Rule | Effect |
+|------|--------|
+| P1 (path) — touches auth, payments, crypto, secrets, migrations | Always **Decide**, even at 99% confidence |
+| C4 (hedge) — finding contains "might", "possibly", "could", "may be" | Always **Decide** |
+| C1 (high confidence + safe category) | **Auto-fix** if not blocked above |
+| C3 (low confidence) | **Log only** |
+
+Hedge detection must use whole-word matching ("mighty" must not match "might"). Path matching must be exact-segment ("/auth/" not "auth" — `auth_log.txt` is logging, not auth code).
+
+### Hard Backstops Stay in Place
+
+Gate agents are **judgment-augmentation, not the safety boundary**. The hard checks run independently of the agent:
+
+- Pre-commit hook secret scan (works without the agent)
+- Settings.json deny patterns (block force-push to main, hard-deny `rm`)
+- Standard tool permission prompts (developer sees and approves every push)
+- PreToolUse guard hooks (red-line enforcement)
+
+If the agent is buggy, slow, or returns the wrong verdict, the hard checks still catch the dangerous cases. This is what makes it safe to remove the rubber-stamp ask.
+
+### Cold-Pass Verification Before Trusting
+
+Before relying on a gate agent in production, run a **cold-pass** — fire the agent live against an adversarial fixture set, not just unit tests. Adversarial fixtures probe rule precedence (does P1 beat C1?), edge cases (whole-word hedge match, empty findings, race conditions on multiple in-progress markers), and output format (does the agent produce the expected structured verdict?).
+
+A cold-pass for a triage agent looks like: 10 hand-crafted fixtures covering precedence interactions, fired in parallel against the live agent, with results scored against the contract. Anything below 9/10 PASS is calibration debt to address before retiring the rubber-stamp ask.
+
+### Agent-Unavailable Fallback
+
+What happens when the gate agent itself is unreachable — model API down, agent file missing, hardlink broken? The naive answer is fail-closed (refuse to proceed). The right answer is **fail-open with a structured chat-ask** in most cases:
+
+```
+[Agent name] unavailable: <reason>.
+
+Still protected:
+- Pre-commit hook secret scan: <PRESENT|MISSING — checked via test -x .git/hooks/pre-commit>
+- Hard guard hook: ON
+- Standard permission prompt: ON
+
+Lost without agent: vague-commit check, plan-scope drift, hedge-finding triage.
+
+Glance the diff and approve, or wait for the agent to come back.
+```
+
+Why fail-open is the default: the agent is augmentation, not the safety boundary. Fail-closed during transient API outages would (a) stop work for hours, (b) push the developer toward manual workarounds that route around the audit trail entirely. The structured chat-ask preserves visibility into what's still protected so the human can make an informed call.
+
+**Exception — fail-closed when a hard check is missing.** If `test -x .git/hooks/pre-commit` returns non-zero, the project is missing the secret-scan layer that normally backstops the agent. In that case, refuse the action and surface "install hooks first." This is the one case where fail-open is genuinely riskier than fail-closed — secret patterns could land on the remote with neither layer catching them.
+
+The general rule: fail-open if the hard mechanical layer is intact. Fail-closed only if a specific hard check is verifiably missing.
+
+---
+
 ## Assumption Verification
 
 ### The Problem
@@ -1120,6 +1216,61 @@ Terminal output is a wall of monospace text. By the time a "your-turn" moment sc
 
 The colors are deliberate: orange = your hands needed, green = safe go, yellow = think, red = stop, blue = your turn. All five render well on dark and light terminals. Use sparingly — every marker should be a real action moment, not decoration. If markers start appearing in routine status updates, they've become noise and the convention dies.
 
+### Plain-English Decision Menus
+
+Even with a clean A/B/C structure, decision menus fail in a specific way: the **labels** describe what the AI does internally rather than what the developer (or the product, or the user) experiences. A label like "Refactor the cache layer to use a write-through pattern with TTL invalidation" is technically precise and almost useless as a decision aid — it forces re-reading and translation before a choice can be made.
+
+Five rules turn jargon menus into scannable decision aids:
+
+1. **Outcome first.** Each option label describes the result, not the mechanism. "Page loads twice as fast" beats "Add Redis-backed query cache." If the technical term IS the decision axis (e.g., "Postgres vs. MySQL"), keep it once and gloss it in plain terms.
+2. **Short scannable headers.** 4–8 words per label. Full sentences belong in the tradeoff line below the label, not in the label itself.
+3. **One tradeoff line per option.** State the biggest cost, risk, or catch — pick one. Never paragraph-level analysis inside the menu. If a deeper comparison is needed, that's a separate doc.
+4. **BLUF — recommendation summary above the menu.** Bottom Line Up Front: one sentence stating the recommendation and its main reason, before A/B/C. The 🟢 prefix on the recommended option still works for scannability — but the BLUF means the developer doesn't have to read all four options to understand the call.
+5. **Cynefin signal when judgment is required.** When there's no obviously right answer, prefix the BLUF with 🟡 and say so plainly: "🟡 Expert call — no obviously right answer here. My recommendation based on your current scale: …" When the answer is clear, skip the framing.
+
+**Jargon swap list.** Replace these in option labels and tradeoff lines unless the term IS the decision:
+
+| Avoid | Use instead |
+|---|---|
+| migrate | move |
+| provision | set up |
+| deprecate | phase out / stop using |
+| refactor | clean up the code |
+| latency | response time / delay |
+| codebase | the code |
+| deploy | publish / push live |
+| environment | server (keep "staging"/"prod" as plain words) |
+| optimize | speed up / make more reliable |
+| implement | add / build / turn on |
+| token cost | money per API call |
+| subagent | helper |
+| hook | guardrail |
+| skill | workflow |
+
+**Before / after example.**
+
+Bad:
+```
+A) Extract 2 sections to rule files. ~5k saved. Lowest risk.
+🟢 B) Extract 3 sections + lightly compress. ~8k saved. Matches existing extraction pattern.
+C) Aggressive — extract 4 sections + compress prose throughout. ~12k saved.
+```
+
+Good:
+```
+We need to bring the config file back under the size warning. Safest fix
+that still clears the threshold: trim the three biggest sections to short
+pointers.
+
+A. Conservative trim — small win, may not clear the warning.
+🟢 B. Trim to comfortable range — clears the warning, no behavior change.
+C. Aggressive cleanup — biggest win but higher risk of losing nuance.
+```
+
+The good version is shorter, scannable, and a non-developer reader can pick without translation.
+
+**Self-check before posting any menu.** Outcome-first? 4–8 word headers? No internal jargon (file paths, flags, agent/hook names) in the labels? One tradeoff line per option? BLUF sentence above the menu? If any check fails, rewrite before posting.
+
 ### Red Lines
 
 Actions that should never happen without explicit permission, regardless of context:
@@ -1486,7 +1637,10 @@ The two-phase discipline is what makes the difference: the first round looked li
 |-------|------------|---------|
 | Evaluator | Best | Independent functional testing with anti-rationalization rules |
 | Code Reviewer | Mid-tier | Background quality review, 80%+ confidence threshold |
+| Code Review Triage | Mid-tier | Classifies reviewer findings into Auto-fix / Decide / Log buckets — replaces the "fix all?" rubber-stamp ask |
 | Fix Reviewer | Mid-tier | Post-fix blast radius review — checks root cause coverage and caller impact |
+| Plan-Step Readiness | Mid-tier | Fires on `[~]→[x]` plan flip; verifies next task is unblocked, returns PROCEED\|HALT |
+| Push Gate Reviewer | Cheapest | Pre-push soft checks (vague commit, scope drift, infra-file flag); replaces the "push now?" rubber-stamp |
 | Parallel Audit | Mid-tier | Multi-project security scanning across active projects |
 | Quick Verify | Mid-tier | Parallel multi-criteria verification |
 | Context Gatherer | Cheapest | Session start context loading |
@@ -1500,7 +1654,7 @@ The two-phase discipline is what makes the difference: the first round looked li
 | Deny rules | ~70 |
 | Hooks | ~35 scripts across 8+ event types (Claude Code exposes ~30 events; these are the most useful) |
 | Skills | ~25 custom + ~20 via plugins |
-| Agents | 7 custom definitions |
+| Agents | 10 custom definitions |
 | Path-scoped rules | ~20 files |
 | Plugins | ~15 enabled |
 | MCP servers | 8-10 connected |
