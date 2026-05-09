@@ -445,9 +445,11 @@ flowchart TD
 
 ### Verify After Fix
 
-1. Run the failing test, then module tests, then caller tests from the impact map
+1. Spawn a `quick-verify` agent (cheap-tier, foreground/synchronous) with the failing test, module tests, caller tests from the impact map, and any regression spot-checks flagged by `git log -10` on adjacent files. Read the PASS/FAIL table; on any FAIL, do not report the fix done — surface the failure.
 2. No tests exist → flag explicitly: "No test coverage — regression risk"
 3. Spawn a fix-reviewer agent in the background with: bug description, impact map, and git diff
+
+The `quick-verify` agent is a cheap synchronous gate at known blast-radius moments. Same pattern is wired into deploy verification (after the version-match probe confirms the new commit is serving, quick-verify runs `/health`, homepage, key-API-endpoint, and a console-error scan in parallel — only then is the deploy reported "live").
 
 ### Escalation — Automatic
 
@@ -589,13 +591,25 @@ The path matching is glob-based (e.g., `**/auth/**`, `**/payment/**`). Each rule
 
 ### Secret Scanning Approach
 
-The scanning strategy uses two layers:
+The scanning strategy uses two pattern layers (shared across all enforcement points):
 
 1. **Known format detection** — scan for well-known API key formats (provider-specific prefixes, known token patterns). Each major cloud/SaaS provider has a distinctive key format.
 
 2. **Generic credential patterns** — scan for `key=value` patterns that commonly indicate hardcoded secrets, with false-positive filtering to exclude environment variable getters and placeholder values.
 
-Both layers run on every file write (PostToolUse hook) and on every commit (pre-commit git hook). The defense-in-depth principle means catching a secret at either stage is a win.
+Those patterns run at multiple enforcement points: every file write (PostToolUse hook), every commit (pre-commit git hook), and — for content scanning — every tool result that returns to Claude's context. The defense-in-depth principle means catching a secret at any stage is a win.
+
+### Content-Scanning Tripwire on Tool Results
+
+A separate enforcement point: a PostToolUse content scanner that fires on any tool result returning to Claude's context (Bash output, file reads, MCP responses) and matches against the same pattern library. When a match is found, it logs a redacted alarm to `~/.claude/secret-leak-alarms.log` and emits a system-reminder. This catches the class of leak where a secret arrives *into* context unexpectedly — for example, a misbehaving CLI echoing a token in its error output, or an MCP tool returning a database connection string in a metadata response.
+
+The scanner ships in two phases:
+
+1. **Alarm-only.** Logs and reminds, but the value has already entered context — rotation is required. This is the cheaper first cut: no risk of breaking legitimate content, generates evidence about which patterns and which tools are real-world fire sources.
+
+2. **Auto-redact.** Uses the PostToolUse `updatedToolOutput` rewrite primitive (newer Claude Code versions) to redact matches in place before Claude sees the tool result. Prevents the leak instead of just recording it.
+
+The two-phase approach mirrors the [Two-Phase Hook Migrations](#two-phase-hook-migrations) pattern — soak in alarm mode to gather evidence about false positives and pattern-coverage gaps before flipping to enforcement.
 
 ### Pre-Commit Git Hook
 
@@ -729,7 +743,7 @@ flowchart LR
 
 **2. Plan-step readiness gate.** A `PostToolUse` hook fires when a plan checkbox flips from `[~]` to `[x]`. A sonnet agent reads the plan file and checks: are there other `[~]` tasks left dangling (race-condition guard)? Is the next task's scope still aligned with what's been built? Are its prerequisites met? On `PROCEED`, the AI marks the next task `[~]` and starts work — skipping the "Continue with Task N+1?" ask. On `HALT`, the AI surfaces the reason and waits.
 
-**3. Code-review triage.** After a code-reviewer agent returns findings, a sonnet triage agent classifies each into three buckets: **Auto-fixing now** (obvious safe fixes — typos, missing null checks the reviewer is 95%+ confident about), **For your decision** (security, architectural, or hedged findings — require human judgment), **Logged only** (style nits, low-confidence false positives). Auto-fixes apply immediately; decision items surface with a 🛑 prefix; logged items go to the session log. The "Fix all 7 findings?" ask becomes "applied 4, you decide 2, logged 1."
+**3. Code-review triage.** After a post-evaluate-reviewer agent returns findings, a sonnet triage agent classifies each into three buckets: **Auto-fixing now** (obvious safe fixes — typos, missing null checks the reviewer is 95%+ confident about), **For your decision** (security, architectural, or hedged findings — require human judgment), **Logged only** (style nits, low-confidence false positives). Auto-fixes apply immediately; decision items surface with a 🛑 prefix; logged items go to the session log. The "Fix all 7 findings?" ask becomes "applied 4, you decide 2, logged 1."
 
 ### Rule Precedence Inside Triage
 
@@ -1373,12 +1387,12 @@ A hook can enforce model selection by blocking subagent calls that don't specify
 
 ### Effort Escalation Protocol
 
-Modern Claude models expose an "effort" setting that trades tokens for reasoning depth (low → medium → high → extended). Higher effort levels emit more thinking tokens, billed as output, which can be 5× the cost of input tokens. Pinning the highest effort globally is wasteful — most turns don't need it.
+Modern Claude models expose an "effort" setting that trades tokens for reasoning depth (low → medium → high → xhigh). Higher effort levels emit more thinking tokens, billed as output, which can be 5× the cost of input tokens. Pinning the highest effort globally is wasteful — most turns don't need it.
 
 The pattern:
 
 - **Session default:** high effort (good reasoning, reasonable cost)
-- **Escalate immediately before** spawning a deep-reasoning subagent (evaluator, contrarian review, architecture synthesis for 3+ constraints)
+- **Escalate to xhigh immediately before** spawning a deep-reasoning subagent (evaluator, contrarian review, architecture synthesis for 3+ constraints) — Claude Code now exposes an interactive `/effort` slider for this; the value also appears in hook subprocess env as `$CLAUDE_EFFORT`, so hooks can gate behavior by tier
 - **Drop back** to the default after the subagent returns
 
 Think of effort escalation like the subagent model routing — tiered by signal, not pinned. The discipline is the same: match the cost to the actual reasoning complexity of the task.
@@ -1426,7 +1440,9 @@ Skills are markdown-defined workflows that get loaded into context when invoked.
 **Session Management:**
 | Skill | Purpose |
 |-------|---------|
-| `/save-and-move` | Save progress, run learning pipeline, generate continuation prompt |
+| `/save-and-move` | Save progress, run learning pipeline, generate continuation prompt; spawn fresh session |
+| `/save-and-end` | End-of-day variant — save artifacts, no new session spawned |
+| `/clear-and-continue` | Mid-session context rotation — same task, same project, fresh context (drops handoff + ends with `Then run: /clear`) |
 | `/memory-audit` | Detect stale references in knowledge files |
 | `/memory-consolidate` | Auto-merge near-duplicate memory files via subagent decisions; snapshot + reversible archive |
 | `/plan-sprint` | Sprint planning with security posture check |
@@ -1514,12 +1530,15 @@ Context-switching between tools breaks flow. Checking deployment status in one b
 ├── CLAUDE.md              # Global preferences, standards, red lines
 ├── settings.json          # Hooks, permissions, deny rules
 ├── corrections.md         # Correction capture log (processed by /save-and-move)
-├── agents/                # Custom agent definitions (5-6 agents)
-│   ├── evaluator.md       # Independent functional tester (best model)
-│   ├── code-reviewer.md   # Quality review (mid-tier)
-│   ├── fix-reviewer.md    # Post-fix blast radius review (mid-tier)
-│   ├── quick-verify.md    # Parallel verification runner
-│   └── context-gatherer.md # Session start context (cheapest)
+├── agents/                # Custom agent definitions (8 agents)
+│   ├── evaluator.md              # Independent functional tester (best model)
+│   ├── post-evaluate-reviewer.md # Code review after /evaluate passes (mid-tier; renamed from code-reviewer to disambiguate from plugin agents)
+│   ├── code-review-triage.md     # Triage reviewer findings into auto-fix / decision / logged (cheap)
+│   ├── fix-reviewer.md           # Post-fix blast radius review (mid-tier)
+│   ├── quick-verify.md           # Parallel verification runner — invoked synchronously by deploy-verification + fix-discipline rules
+│   ├── push-gate-reviewer.md     # Pre-push soft-check gate agent (cheap)
+│   ├── plan-step-readiness.md    # Plan-step gate on `[~]→[x]` checkbox transitions (mid-tier)
+│   └── session-scanner.md        # Parses session state for save-and-move (cheapest)
 ├── hooks/                 # Hook scripts (15+ scripts across event types)
 │   ├── assumption-check.sh        # Layer 3: nudge on external-system files
 │   ├── assumption-check-patterns.txt  # Pattern list (self-calibrating)
@@ -1584,7 +1603,7 @@ Claude Code hooks fire at specific events. Here's what each event is good for:
 |------------|-----------|---------|
 | `SessionStart` | New conversation begins | Environment checks, orientation, loading context, config drift detection |
 | `PreToolUse` | Before a tool runs | Dependency install warnings, command validation, subagent model-routing enforcement (matcher: `Agent`) |
-| `PostToolUse` | After a tool runs | Auto-formatting, secret scanning, evaluate reminders |
+| `PostToolUse` | After a tool runs | Auto-formatting, secret scanning, evaluate reminders. Can return `updatedToolOutput` to **rewrite** tool output (e.g. redact secrets in place) — not just block or allow |
 | `PreCompact` | Before context compaction | Active handoff — capture state + instruct AI to write handoff file |
 | `PostCompact` | After context compaction | Log compaction event + verify pre-compact handoff landed |
 | `PermissionRequest` | A permission dialog is about to be shown (matcher: tool name) | Log the structured `permission_suggestions` payload (rules + behavior + destination) at request-time. Richer than transcript scanning — see [Two-Phase Hook Migrations](#two-phase-hook-migrations) |
@@ -1600,6 +1619,10 @@ The full hook event surface is larger (~27 events including `InstructionsLoaded`
 Hooks are configured in `~/.claude/settings.json` and can be scoped by tool name (e.g., only fire on `Edit` and `Write` tools). Use the `if` field to filter by command pattern — e.g., a PostToolUse hook on `Bash` with `if: "Bash(git commit *)"` only fires on commits, avoiding unnecessary hook executions on every shell command. For subagent dispatching, use `PreToolUse` with `matcher: "Agent"` — that's where model-routing enforcement and word-cap checks belong.
 
 **Gotcha: catch-all matchers.** An empty `""` matcher fires on *every* tool call. This is powerful for global hooks (notifications, logging) but dangerous if the hook script is missing or broken — it generates an error on every single tool action. Prefer scoped matchers (`"Bash"`, `"Edit|Write"`) unless you genuinely need every tool call.
+
+**Composability: hooks can invoke MCP tools.** Newer Claude Code versions support `type: "mcp_tool"` hook actions, letting a hook fire an MCP call as its action (e.g., a SessionEnd hook that posts to a Slack MCP, or a PreToolUse hook that records to a tracking-MCP before approving the tool). Pairs naturally with `$CLAUDE_EFFORT` in subprocess env for tier-gated behavior.
+
+**Outbound-egress guardrail:** the `sandbox.network.deniedDomains` settings field blocks outbound network calls to listed hosts regardless of which tool initiates the call. Pairs with the credential-handling patterns above as a defense-in-depth backstop against prompt-injection-style exfiltration. Cost: list maintenance.
 
 ### Informational Hooks — Context Over Blocking
 
@@ -1652,11 +1675,11 @@ The two-phase discipline is what makes the difference: the first round looked li
 |-----------|-------|
 | Allow rules | ~170 |
 | Deny rules | ~70 |
-| Hooks | ~35 scripts across 8+ event types (Claude Code exposes ~30 events; these are the most useful) |
-| Skills | ~25 custom + ~20 via plugins |
-| Agents | 10 custom definitions |
+| Hooks | ~37 scripts across 9+ event types (Claude Code exposes ~30 events; these are the most useful) |
+| Skills | ~32 custom + ~50 via plugins |
+| Agents | 8 custom definitions |
 | Path-scoped rules | ~20 files |
-| Plugins | ~15 enabled |
+| Plugins | ~25 enabled |
 | MCP servers | 8-10 connected |
 
 ### Adoption Guide
