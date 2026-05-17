@@ -218,6 +218,8 @@ Add a changelog entry at the bottom explaining what changed and why:
 
 Git history captures the exact diff. The changelog captures the *why*.
 
+**Decisions promote out of the plan into a rolling ADR index.** When a plan resolves a decision item (mid-execution choice between approaches, scope tradeoff, library/architecture pick), don't bury the reasoning in the plan's changelog where it dies with the plan file. The pattern: on decision-resolve, auto-append a one-line entry to `docs/decisions/index.md` linking back to the plan section. The plan stays scoped to the feature; the decision register accumulates across plans and outlives them. Two months later, when someone asks "why did we pick X?", the answer is one grep away, not buried in an archived plan file.
+
 ### Task Output Logs
 
 While executing tasks, append timestamped work notes directly in the plan file:
@@ -342,6 +344,14 @@ flowchart LR
 ```
 
 The key lesson: **anything important must already be on disk before compaction triggers.** The PreCompact hook is a safety net for what isn't. Write progress to plan files as you go — but when compaction comes unexpectedly, the active handoff captures everything the plan files don't.
+
+### Mid-Session Context Rotation
+
+PreCompact is the *unplanned* fallback — fires when the context window is about to overflow. But long-running plans cross a transcript-size threshold well before that point, and rotating proactively at a task boundary is cleaner than waiting for compaction to fire mid-task.
+
+The pattern: a Stop-hook that detects "Chapter 1 plan + transcript size over threshold + task-completion marker present" emits a `systemMessage` telling the AI to invoke a `/clear-and-continue` skill on the next turn. The skill writes the handoff file, commits it, and ends with `Then run: /clear` — the developer triggers the rotation, but the handoff is already on disk before the wipe.
+
+**Auto-commit the post-rotation handoff.** The original implementation asked the developer to manually `git commit` the handoff file post-rotation. In practice this manual step never got refused — it was pure friction. Moving the commit *inside* the rotation skill (the skill runs `bash .git/CLAUDE_CLEAR_COMMIT.sh` directly, with a `--no-commit` opt-out) removes a step nobody actually needed to gate. The discipline: when a manual confirmation pattern has zero refusal cases over months of real use, it's a ritual, not a gate — promote the action to automatic and keep an opt-out flag.
 
 ---
 
@@ -1113,6 +1123,8 @@ if recent_commit and not log_updated:
 
 The pattern generalises: every "remember to do X at the end" rule that's worth automating should fire only when the trigger actually applies. Always-on reminders become background noise. Conditional reminders stay credible.
 
+**The same pattern at the *start* of a session.** A SessionStart hook that scans for "left-behind work" — uncommitted changes in tracked projects, plan files with `[~]` (in-progress) checkboxes not flipped to `[x]`, pending review markers — and surfaces a short TODO list to the AI before any work begins. Re-entering a project cold without this nudge often produces "let me start fresh on X" when there's already a half-finished task waiting. The conditional discipline applies symmetrically: nudge only when actual signal exists. A SessionStart hook that fires on every cold start (even for read-only "what is X?" questions) gets tuned out fast.
+
 ### The Learning Promotion Pipeline
 
 Not every lesson belongs in global config. A four-gate pipeline prevents premature promotion:
@@ -1385,6 +1397,8 @@ The evaluator is always the best model regardless of session model — that's wh
 
 A hook can enforce model selection by blocking subagent calls that don't specify an explicit model parameter. This prevents accidental use of expensive models for trivial tasks and ensures the routing rules are followed consistently.
 
+**Cheap synchronous verifiers without subagent overhead.** Subagents pay a fixed cost — separate context, tool-loading round-trip, transcript persistence. For quick yes/no checks against a fresh prompt (pattern match, JSON-shape verification, classifier-style decisions), spawning a full subagent is overkill. A thin shell wrapper around `claude -p` with `--strict-mcp-config` (suppresses MCP forking, the dominant cost) and `--model claude-haiku-*` gives you a synchronous one-shot call to the cheapest tier from within a hook or skill — useful for "should this commit message trigger the deferral guard?" or "does this diff need a re-evaluation?" decisions. The trade: you lose subagent state and tool access, so use it only where the answer is "respond once based on the prompt" with no follow-up.
+
 ### Effort Escalation Protocol
 
 Modern Claude models expose an "effort" setting that trades tokens for reasoning depth (low → medium → high → xhigh). Higher effort levels emit more thinking tokens, billed as output, which can be 5× the cost of input tokens. Pinning the highest effort globally is wasteful — most turns don't need it.
@@ -1637,6 +1651,22 @@ The pattern:
 
 **Companion pattern — whitelist to reduce false-block friction.** A guard that blocks *all* compound commands (`&&`, `|`, subshells) teaches the developer to work around it by writing temp scripts — but the whole point of the guard was to prevent permission-prompt spam, and single-pipe-to-read-only-filter cases (`ls | head`, `cat x | jq`) are already in most allow-lists. Refine the guard to allow those exact cases; block only the compound operators that actually trigger prompts. Blunt guards get ignored or disabled; surgical guards get respected.
 
+**Terminal feedback via `terminalSequence`** (Claude Code v2.1.141+). Hooks can return a top-level `terminalSequence` field in their JSON output containing raw ANSI escape sequences — Claude Code emits them through the terminal write path (race-free, works under tmux/screen). High-value targets: desktop notifications when something fires while the developer is away from the terminal (auto-rotation, long-build completion, deploy verification result), and dynamic window titles that encode session state (current project, plan checkpoint, evaluation status).
+
+Concrete shape — auto-rotation hook example:
+
+```bash
+# OSC 777 — desktop notification on auto-rotate fire (Ghostty, urxvt, Warp)
+project_name=$(basename "$cwd")
+notify_seq=$(printf '\033]777;notify;Claude Code — %s;Auto-rotate fired\007' "$project_name")
+jq -nc --arg m "$msg" --arg seq "$notify_seq" \
+  '{systemMessage: $m, terminalSequence: $seq}'
+```
+
+Supported sequences: OSC 0/1/2 (titles), OSC 9 (iTerm2/WezTerm/Windows Terminal), OSC 99 (Kitty), OSC 777 (urxvt/Ghostty/Warp), bare BEL. Blocked sequences: CSI cursor/colour, OSC 8 hyperlinks, OSC 52 clipboard, OSC 1337 — the field is rejected if any are present. Available on all hook events, no event-type restriction.
+
+Use it for ambient feedback that doesn't demand attention but is genuinely useful when noticed. Avoid for chatty events that fire often — desktop notification fatigue is real, and OSes start collapsing them once a stream becomes background noise.
+
 ### Two-Phase Hook Migrations
 
 When a new hook event lets you replace an older hook with a more accurate or efficient one, don't swap directly. Run both in parallel for ~1 week with the new hook in **log-only mode** — no user-visible output, just appends to a file. At the end of the week, diff the new log against what the old hook caught:
@@ -1653,6 +1683,10 @@ Real example, two rounds:
 2. **Round 2:** `PermissionRequest` event piloted (richer than `PermissionDenied` — fires before the dialog with structured `permission_suggestions` containing tool, rules, behavior, destination). Goal: retire the transcript scanner for the standard-prompt-denial case once the structured payload is verified to give equivalent or better detection.
 
 The two-phase discipline is what makes the difference: the first round looked like a clean win on paper, but the parallel week exposed the scope limitation before any safety regression landed.
+
+**Round 3 — retirement with parallel-log evidence.** After ~2 weeks of `PermissionRequest` running alongside the transcript scanner, the structured log accumulated ~330 entries; the Stop scanner emitted zero unique nudges the new hook didn't already cover. Decision: retire the transcript scanner. The discipline holds in reverse — same parallel-evidence check that justifies adopting a new hook also justifies removing an old one. Keep the disabled file on disk with a `.disabled-YYYY-MM-DD` suffix (or revert via git) so the retirement is reversible.
+
+**Companion check before silent caps:** when a Claude Code release adds a fire-cap or rate-limit on a hook event (e.g., the v2.1.143 cap of 8 consecutive Stop-hook blocks per turn), audit your existing hooks' lifetime fire counts *before* the cap silently hides chain-fires. If any hook is already close to the cap, the cap will mask a bug rather than report it.
 
 ### Custom Agents
 
@@ -1675,10 +1709,10 @@ The two-phase discipline is what makes the difference: the first round looked li
 |-----------|-------|
 | Allow rules | ~170 |
 | Deny rules | ~70 |
-| Hooks | ~37 scripts across 9+ event types (Claude Code exposes ~30 events; these are the most useful) |
-| Skills | ~32 custom + ~50 via plugins |
+| Hooks | ~50 scripts across 9+ event types (Claude Code exposes ~30 events; these are the most useful) |
+| Skills | ~34 custom + ~50 via plugins |
 | Agents | 8 custom definitions |
-| Path-scoped rules | ~20 files |
+| Path-scoped rules | ~34 files |
 | Plugins | ~25 enabled |
 | MCP servers | 8-10 connected |
 
