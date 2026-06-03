@@ -2,23 +2,29 @@
 
 > Patterns, guardrails, and hard-won lessons from building with Claude Code every day.
 
-A battle-tested methodology for building reliable software with [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Developed over months of daily use across multiple active projects.
+A battle-tested methodology for building reliable software with [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Developed over months of daily use across multiple active projects — and continuously revised as the models, the platform, and the economics changed underneath it. Patterns that stopped earning their keep are retired in the open: see [Retired Patterns](#retired-patterns).
 
-This isn't a tutorial. It's a system of patterns, conventions, and guardrails that solve real problems: context loss during long builds, security gaps, deployment failures, and the natural tendency of AI assistants to rationalize their own mistakes.
+This isn't a tutorial. It's a system of patterns, conventions, and guardrails that solve real problems: context loss during long builds, security gaps, deployment failures, recommendations that quietly favor whatever is easiest, and the natural tendency of AI assistants to rationalize their own mistakes — and to agree with whoever pushes back.
 
 **Take what's useful, ignore what isn't.** Each pattern stands on its own.
 
-> **Quick start:** Losing context mid-build? Start with [Context Survival](#context-survival). Shipping bugs? Start with [The Generator-Evaluator Pattern](#the-generator-evaluator-pattern). Want defense in depth? Start with [The 10-Stage Security Lifecycle](#the-10-stage-security-lifecycle).
+> **Quick start:** Losing context mid-build? Start with [Context Survival](#context-survival). Shipping bugs? Start with [The Generator-Evaluator Pattern](#the-generator-evaluator-pattern). AI flip-flopping when you push back? Start with [Recommendation Integrity](#recommendation-integrity). Answering "yes, continue" forty times a day? Start with [The Decision Gate](#the-decision-gate). Want defense in depth? Start with [The 10-Stage Security Lifecycle](#the-10-stage-security-lifecycle).
 
 ### Patterns at a Glance
 
 | Pattern | Problem It Solves | Section |
 |---------|-------------------|---------|
 | **The Planning Pipeline** | Scope creep, building before understanding | [Link](#the-planning-pipeline) |
+| **Chapter-Based Execution** | Mid-plan "continue?" checkpoints that fragment autonomous runs | [Link](#chapter-based-execution) |
+| **The Decision Gate** | Questions surfacing mid-work, answered late or never | [Link](#the-decision-gate) |
 | **File-Based Progress Tracking** | Losing place after context compaction | [Link](#context-survival) |
 | **The Stack Frame Pattern** | Nested sub-plans causing parent plan amnesia | [Link](#nested-sub-plans-the-stack-frame-pattern) |
 | **Generator-Evaluator** | AI confidently approving its own broken code | [Link](#the-generator-evaluator-pattern) |
 | **Anti-Rationalization Rules** | Evaluators talking themselves into a pass | [Link](#anti-rationalization-rules) |
+| **Pass Artifacts, Not Reasoning** | Reviewers inheriting the anchor that produced the conclusion | [Link](#pass-artifacts-not-reasoning) |
+| **Evidence Labeling** | Recommendations backed by confident-sounding guesses | [Link](#evidence-labeling) |
+| **Recommend Best, Not Easiest** | The recommendation always landing on the lowest-effort option | [Link](#recommend-the-best-not-the-easiest) |
+| **Hold Position Under Challenge** | AI caving to pushback instead of re-verifying | [Link](#hold-position-under-challenge) |
 | **Fix Discipline** | Applying fixes without understanding blast radius | [Link](#fix-discipline) |
 | **Correction Capture** | Same mistake repeated across sessions | [Link](#correction-capture) |
 | **Multi-Perspective Council** | Single-viewpoint bias on business decisions | [Link](#the-multi-perspective-council) |
@@ -27,7 +33,12 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **Three-Tier Permissions** | Too permissive or too restrictive tool access | [Link](#the-permission-model) |
 | **Red Lines** | Safety rules lost on context compaction | [Link](#red-lines) |
 | **Pre-emptive Self-Run Routing** | Friction loop when AI proposes commands the harness will categorically deny | [Link](#pre-emptive-self-run-routing) |
-| **Model Routing** | Overspending on cheap tasks, underpowering hard ones | [Link](#model-routing) |
+| **Model & Effort Routing** | Paying frontier prices for mechanical turns, starving hard reasoning | [Link](#model--effort-routing) |
+| **The Watcher Fleet** | Behavioral rules the AI follows 60-70% of the time instead of 100% | [Link](#the-watcher-fleet) |
+| **Full Strength from Day One** | Alarm-only probation making new guards feel like dumbed-down versions of themselves | [Link](#full-strength-from-day-one) |
+| **Hook Liveness Audits** | Guards that are wired, tested, green — and have never fired in production | [Link](#hook-liveness-audits) |
+| **Context Economics** | Instruction load silently growing until every session starts heavy | [Link](#context-economics) |
+| **Open Questions Live in Chat** | Questions buried in generated files the developer never reads | [Link](#the-decision-gate) |
 | **Skills & Plugins Ecosystem** | Reinventing workflows every session | [Link](#the-skills--plugins-ecosystem) |
 | **MCP Integration Layer** | Manual context-switching between external tools | [Link](#mcp-integration-layer) |
 | **Do It Yourself** | AI delegating work back to the developer | [Link](#the-do-it-yourself-principle) |
@@ -43,7 +54,6 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **Chesterton's Fence** | Removing code without understanding why it exists | [Link](#chestertons-fence) |
 | **Scope Flagging** | Fixing unrelated issues and losing focus on the task | [Link](#scope-flagging) |
 | **Informational Hooks** | Blunt guards create friction; blocking everything prevents flow | [Link](#informational-hooks--context-over-blocking) |
-| **Two-Phase Hook Migrations** | Replacing a working hook silently regresses safety; need evidence before retiring | [Link](#two-phase-hook-migrations) |
 | **Conditional Reminders** | Always-on reminders become noise even on the sessions that need them | [Link](#conditional-session-end-reminders) |
 | **Machine-Readable Conventions** | Prose conventions in CLAUDE.md drift away from settings.json the platform actually reads | [Link](#make-conventions-machine-readable) |
 | **Periodic Harness Audit** | Config, tools, and published patterns drift silently | [Link](#periodic-harness-audit) |
@@ -57,10 +67,13 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 
 - [Philosophy](#philosophy)
 - [The Planning Pipeline](#the-planning-pipeline)
+- [The Decision Gate](#the-decision-gate)
 - [Context Survival](#context-survival)
 - [The Generator-Evaluator Pattern](#the-generator-evaluator-pattern)
+- [Recommendation Integrity](#recommendation-integrity)
 - [Fix Discipline](#fix-discipline)
 - [Feedback Loops](#feedback-loops)
+- [The Watcher Fleet](#the-watcher-fleet)
 - [The 10-Stage Security Lifecycle](#the-10-stage-security-lifecycle)
 - [Code Quality Gates](#code-quality-gates)
 - [Gate Agents at Workflow Transitions](#gate-agents-at-workflow-transitions)
@@ -68,11 +81,13 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 - [Performance Audit](#performance-audit)
 - [Deployment Patterns](#deployment-patterns)
 - [Knowledge Management](#knowledge-management)
+- [Context Economics](#context-economics)
 - [The Permission Model](#the-permission-model)
-- [Model Routing](#model-routing)
+- [Model & Effort Routing](#model--effort-routing)
 - [The Skills & Plugins Ecosystem](#the-skills--plugins-ecosystem)
 - [MCP Integration Layer](#mcp-integration-layer)
 - [Implementation Reference](#implementation-reference)
+- [Retired Patterns](#retired-patterns)
 - [Starter Template](#starter-template)
 - [Security Note](#security-note)
 
@@ -80,7 +95,7 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 
 ## Philosophy
 
-Five design threads run through everything:
+Six design threads run through everything:
 
 ```mermaid
 mindmap
@@ -101,10 +116,14 @@ mindmap
       5 automatic + 5 manual security stages
       No single check catches everything
       Layer cheap fast checks
-    Explicit Decisions
-      One recommendation, not a menu
-      Permission prompts explain risk
-      Continuation prompts orient sessions
+    Front-Loaded Decisions
+      All questions before work starts
+      One at a time, with a counter
+      Then an autonomous run
+    Mechanical Enforcement
+      Prose rules drift, hooks do not
+      Watchers scan the AI's own output
+      Block, do not advise
 ```
 
 1. **Silent automation** — Hooks, rules, and agents run invisibly. The developer shouldn't have to remember to run security scans or format code. If you have to remember to do it, you'll forget.
@@ -115,7 +134,9 @@ mindmap
 
 4. **Defense in depth** — No single check catches everything. Layer automatic checks (session start, file save, pre-commit) with manual reviews (code review, deploy check, quarterly audit). Five fast, cheap checks beat one slow, expensive one.
 
-5. **Explicit decision-making** — One recommendation, not a menu. Permission prompts explain what/why/scope/risk. Continuation prompts orient new sessions. No hidden state changes.
+5. **Front-loaded decisions, then autonomy** — Every task opens by collecting the decisions the developer actually needs to make — asked one at a time, with a recommendation. After the last answer, the run is autonomous: no "continue?" checkpoints, no rubber-stamp asks. The test for whether a question deserves the developer's attention: *would they just rubber-stamp the AI's pick?* Then it's not their question.
+
+6. **Mechanical enforcement over prose rules** — A behavioral rule written in CLAUDE.md gets followed maybe 60-70% of the time; under context pressure it drifts. A hook fires 100% of the time. Every rule that matters ends up with a mechanical backstop — including rules about the AI's *own communication*, enforced by watchers that scan its output before it reaches the developer.
 
 ---
 
@@ -194,15 +215,19 @@ Plans use bite-sized tasks (2-5 minutes each) with exact file paths, complete co
 
 The checkboxes (`- [ ]`, `- [~]`, `- [x]`) are critical — they enable [Context Survival](#context-survival).
 
-### Batch Execution with Checkpoints
+### Chapter-Based Execution
 
-Don't execute the entire plan in one go. Execute in batches of 3 tasks, then pause:
+Earlier versions of this system executed plans in batches of 3 tasks with a pause for review between batches. Months of real use showed the pauses were rubber stamps — the answer was "continue" every single time, and each pause fragmented an otherwise autonomous run. The current model moves all human interaction to the edges:
 
-1. Show what was implemented
-2. Show verification output
-3. Wait for feedback before continuing
+1. **Tasks are typed at plan-writing time.** Pure work tasks, decision points that need the developer, terminal steps only the developer can run (auth, secrets), and GUI steps. Dependency edges (`blocked_by`) are declared inline.
+2. **Chapter 0** — every pre-classified decision is surfaced and answered *before* execution starts.
+3. **Chapter 1** — the AI pushes through every unblocked work task autonomously. No mid-plan checkpoints. It pauses only for hard red lines, blockers, or a genuinely unanticipated decision.
+4. **Chapter 2** — the manual steps and any decisions that emerged mid-run are bundled into one review moment, instead of interrupting the developer N times.
+5. **Chapter 1ʹ** — newly-unblocked tasks run, again autonomously.
 
-This prevents runaway execution where the AI builds 10 tasks on a wrong foundation.
+Execution position persists in a state file next to the plan (`<plan>.state.json`); the checkboxes in the plan markdown are the human-readable mirror. After compaction or a session restart, the AI reads the state file and resumes mid-chapter.
+
+The principle: **interruptions are batched, autonomy is contiguous.** A plan with zero decision/manual tasks runs end-to-end without a single ask.
 
 ### Plans Are Living Documents
 
@@ -234,6 +259,61 @@ While executing tasks, append timestamped work notes directly in the plan file:
 ```
 
 This complements checkboxes (task-level status) with step-level detail. On resume after compaction, the output log tells you exactly where you stopped mid-task — not just which task, but which step within it.
+
+---
+
+## The Decision Gate
+
+### The Problem
+
+Questions for the developer surface at the worst possible times: mid-implementation, buried in a generated plan file, or never. The AI either interrupts constantly (death by checkpoint) or silently decides everything (and you discover three turns later that it picked the wrong payment flow). Both failure modes come from the same root: no protocol for *when* and *how* questions reach the human.
+
+### The Pattern
+
+Every task opens with a gate block — a one-screen inventory of every decision, posted *before* any file is modified:
+
+```
+🚦 Decision Gate — 3 need you, 2 auto-picks
+Your decisions (in sequence):
+  1. Which payment provider — shapes everything below
+  2. Refund window — may change depending on #1
+  3. Email copy tone
+Auto-deciding (veto anytime):
+  • table naming — weighed flat vs prefixed; prefixed wins on maintainability
+Parked from earlier:
+  • analytics admin access — still open
+```
+
+Even a trivial task gets the one-line form: `🚦 Gate: nothing needs you — proceeding.` The gate costs one line; its absence costs silent assumptions.
+
+**Asking protocol:**
+
+- **One question per message**, with a counter ("Question 2 of 3"). Early answers reshape later questions — bundling all questions into one message is the exact failure that produced this pattern: half go unanswered, and work proceeds on assumptions.
+- **Sequence by information dependency**, not discovery order. The answer that reshapes the most downstream questions goes first.
+- **Every question carries a recommendation.** Never a neutral list of options.
+- **After the last answer → autonomous run.** The gate is the contract: questions up front, then no interruptions.
+
+### Two Tiers — the Rubber-Stamp Test
+
+Not every decision belongs in the developer's queue. The split:
+
+- **Ask-and-wait:** product behavior, scope, cost, risk, irreversibility, anything externally visible. Test before queueing a question: *can the developer add something the AI can't — product judgment, user knowledge, risk appetite, money, relationships?* If they'd rubber-stamp the AI's pick, it's not their question.
+- **Auto-decide, visibly:** engineering-internal calls (naming, file structure, schema shape, library-within-approach). These are listed in the gate as auto-picks with the alternative weighed — the developer can veto, but the AI doesn't wait. Skipping the *ask* never means skipping the *show*.
+
+### Mid-Work Emergent Questions
+
+When a question surfaces during the autonomous run, apply a blocking test: **would the next hour of work differ depending on the answer?**
+
+- Yes → stop and ask immediately. Direction and architecture pivots always count.
+- No → park it, surface the parked batch at the next natural break. Never silently dropped.
+
+### Open Questions Live in Chat, Not in Files
+
+Corollary rule with its own enforcement: any question or info-need for the developer is stated *in the conversation* the moment it arises — never only written into a plan, handoff file, or contract draft on the assumption that the developer will read it there. They won't. A Stop-hook backstop scans files written each turn for question shapes (`TODO`, `TBD`, "decision needed") and blocks the AI from ending its turn until each one is surfaced in chat.
+
+### Enforcement
+
+A prompt-submit hook arms a per-session flag when a new instruction arrives; a pre-edit hook blocks any file modification until the gate block has appeared in the AI's output. The hook can verify the gate *exists* — it can't verify the AI actually waited for answers. That part is a prose rule, which is exactly why the gate block is designed to be glanceable: a missing question is visible at a glance in a one-screen inventory.
 
 ---
 
@@ -395,6 +475,23 @@ The evaluator agent has explicit rules to prevent talking itself into a pass:
 - No "PASS but..." language.
 - Better to false-positive (developer verifies) than false-negative (ship broken).
 
+### Pass Artifacts, Not Reasoning
+
+When invoking a reviewer or evaluator agent, pass **artifacts only**: file paths, diffs, commit SHAs, plan files, command output. Never pass the reasoning trail — "I picked X because A, B, C; please verify."
+
+The reasoning trail carries the anchor that produced the original conclusion. A reviewer reading "I chose this library because of A, B, C" will silently inherit the framing and re-validate A, B, C instead of independently asking whether the choice is right. Information isolation is the load-bearing piece of the fresh-context-reviewer pattern — without it, "fresh context" is a label, not a defense.
+
+A PreToolUse hook backstops this: it detects reviewer-shaped agent invocations (subagent type or description matching `review|evaluate|verify|critic|skeptic|audit`) and blocks any whose prompt contains reasoning-trail phrases ("based on my analysis", "I picked X because", "my recommendation").
+
+### A Reviewer Verdict Is Final (Anti-Bypass)
+
+When a delegated reviewer returns FAIL or FLAG, the calling session must not:
+
+1. **Re-run the underlying check itself.** "Let me scan the diff myself — looks fine" defeats the gate even when the local conclusion happens to be correct. The whole point of the gate is to not trust the calling session's judgment on what the reviewer flagged.
+2. **Rationalize past the verdict.** "The reviewer is being overly strict" / "this is a false positive" — if the reviewer is wrong, fix the reviewer (extend its suppression list, add a test fixture). Don't ignore the verdict on this run.
+
+The correct response is to surface the verdict verbatim and wait. The canonical incident: a pre-push reviewer returned FAIL, the calling session re-ran the scan locally, found nothing, and pushed. Nothing was actually wrong that time — but the precedent *is* the failure mode.
+
 ### Auto-Fix Loop
 
 When evaluation fails:
@@ -421,6 +518,62 @@ Match the tool to what you need to verify:
 | Quick pass/fail checks | Headless browser (Playwright) | Fast, low token cost |
 | Multi-step user journeys | E2E framework (Maestro/Cypress) | Declarative, reusable flows |
 | Security headers (CSP, CORS, HSTS) | **Real browser, not curl** | These headers are browser-enforced |
+
+---
+
+## Recommendation Integrity
+
+Code gets an evaluator. Recommendations — "use library X", "go with approach B", "this is safe to ship" — historically got nothing, and they're where AI assistants fail most expensively. Four related defenses, all mechanically enforced by output watchers (see [The Watcher Fleet](#the-watcher-fleet)).
+
+### Evidence Labeling
+
+The highest-damage guess class is *anchor-then-justify*: the AI forms a conclusion first, then cites facts to support it — and the errors are directional, because every misremembered fact happens to favor the conclusion already in mind. Single-fact verification doesn't catch this; the bias is in *which facts get cited*.
+
+The fix is structural: every fact that materially affects a recommendation's ranking carries an inline marker —
+
+- `[evidence: <source>]` — a verifiable source: a file and line, a URL, tool output, or a direct quote from the developer earlier in the session.
+- `[guess: <what would prove this>]` — an honest unverified claim, naming the lookup that would convert it to evidence.
+
+A recommendation backed by four `[evidence:]` facts is grounded. One backed by four `[guess:]` facts is anchored — and now that's visible at a glance, even to a reader who doesn't know the domain. The labeling decision also fires at the cheapest possible moment: while the claim is being written, the AI has to choose verify-or-confess.
+
+**Bad — anchored, unlabeled:**
+
+> A. Use Vendor X — cleanest UI; cheaper than Vendor Y; native integration with your stack.
+> 🟢 B. Stay with Vendor Y — you already use it.
+
+**Good — same recommendation, labeled:**
+
+> A. Use Vendor X — clean UI [evidence: product tour]; cheaper at $7 vs $8/user [guess: would need both pricing pages to confirm current numbers]; native integration [guess: don't recall seeing this — needs a docs check].
+> 🟢 B. Stay with Vendor Y — you already use it [guess: assumption; could verify in 30 seconds].
+
+Same verdict, but now the developer can see that four of five supporting facts are unverified — and ask for the lookups before committing.
+
+### Verify Load-Bearing Guesses Before Recommending
+
+A `[guess:]` marker on a fact that would *change the recommendation if false* isn't just a label — it's a trigger to look it up before emitting. The classes where training data drifts fastest and lookup is cheap: package versions and API surfaces (registry or docs lookup), vendor pricing and feature pages (fetch the current page), CLI flags (`--help`), platform paths (read the actual config). One tool call converts the guess to evidence; a wrong load-bearing fact converts into rework.
+
+The companion habit is a pre-emit pause — three questions before any recommendation: *What's the steelman alternative? What input haven't I checked? Am I anchoring on the first viable path?* If a recommendation goes out with no alternatives named anywhere near it, a watcher bounces it back.
+
+### Recommend the Best, Not the Easiest
+
+LLMs have a documented cost-of-action bias: left alone, the recommendation drifts toward "smallest change", "quickest fix", "minimal churn" — which ships technical debt and patches over root causes. The counter-rule: the recommendation lands on the option that's right long-term (durability, robustness, root cause, maintainability). Effort is information for the tradeoff line, never the justification for the pick.
+
+The test before recommending: *which option would I want in place six months from now?* If that differs from what's about to be recommended, re-rank.
+
+When the fast option genuinely is right — throwaway prototype, externally-imposed deadline, explicitly accepted debt — say so explicitly: "easy is right here *because* this is scaffolding." Don't smuggle it in.
+
+This applies hardest to **autonomous picks**, where no menu is shown and the developer has no veto moment. The required shape: *"Doing X. Weighed Y — X wins on durability. Interrupt if you'd rather Y."* The named alternative is the structural pause that catches effort-anchoring at emit time. A two-layer watcher enforces it: a regex pass on every turn catches effort keywords justifying a pick ("simplest", "quickest", "minimal", "no real upside") with no durability axis nearby, and a cheap LLM judge at the plan-review gate rates whether each recommendation's *stated* axis is plausible — catching the misdirection case where a durability word is used as cover.
+
+### Hold Position Under Challenge
+
+Models affirm users far more than humans do, and flip correct answers under pushback — agreement is what the training rewards. The two highest-damage moments:
+
+1. **The developer challenges a factual or technical conclusion** ("are you sure?", "that looks wrong"). Required behavior: re-verify *before* replying — read the file, run the command, fetch the doc. Then either hold, stating the evidence plainly, or flip, citing the specific new evidence that changed the answer. Never flip on pushback alone: the developer's disagreement is a signal to check, not a fact about the world.
+2. **The developer proposes something.** Engage the substance; never open with praise. If the idea is good, the first sentence should say what makes it work. If it has a flaw, lead with the flaw.
+
+Scope matters: this covers *facts and technical conclusions* only. When the developer overrules on product judgment, risk appetite, or taste — that's their call; accept it without re-litigating.
+
+Enforcement is mechanical and cheap: a Stop-hook watcher fires on the cave signature — a challenge-shaped user message, followed by a flip or praise marker in the reply, with **zero verification tool calls in the turn**. Verify-then-flip passes untouched, so the watcher costs nothing in normal flow and only bites when agreement was unearned. One gotcha worth knowing: softening a hold with "you're right that X, but…" reads as a flip to both the watcher and the human. Structure a hold as claim → evidence → conclusion.
 
 ---
 
@@ -536,6 +689,57 @@ flowchart TD
 
 ---
 
+## The Watcher Fleet
+
+### The Problem
+
+Most hook advice targets *tool calls* — block the dangerous command, scan the file write. But the most persistent failures aren't tool calls; they're **behavioral**: the AI recommends the easy option, caves to pushback, buries a question in a file, drifts into jargon, claims something is deployed when it's only pushed. You write a rule in CLAUDE.md, it works for a week, then context pressure erodes it. Prose rules get followed maybe 60-70% of the time. The other 30-40% is where trust dies.
+
+### The Pattern
+
+Every behavioral rule that matters gets a **watcher**: a Stop-hook script that scans the AI's own output for the rule's failure signature and blocks the turn from ending until the behavior is corrected. The fleet includes watchers for:
+
+- Recommendations with zero evidence markers, or no alternatives named
+- Picks justified by effort keywords with no durability axis nearby
+- The sycophancy cave signature (challenge → flip with no verification call)
+- Questions written into files but never surfaced in chat
+- GUI step-throughs on volatile platforms with no verification call in the turn
+- Manual-delegation ("please go run this") when a tool could have done it
+- Jargon-density drift in developer-facing text
+
+Three engineering details make a fleet of ~15 output watchers livable rather than maddening:
+
+1. **Loop guards.** Each watcher blocks at most once per window (measured in transcript lines, per session). A false positive costs one bounce, not an infinite loop. The block message always says what to do *now* — "verify, then re-emit" — never "consider whether…".
+2. **The quiet channel.** A blocking watcher's message is an instruction *to the model*, not information for the developer. Raw exit-2 stderr renders as red error dumps in the transcript — alarming and useless to the human. A thin adapter wraps every blocking hook at registration and converts its stderr into the platform's structured JSON decision channel: the model gets the correction, the developer's transcript stays clean. The guards themselves stay simple exit-2 scripts; only the adapter knows about the transport, so tests keep asserting plain exit codes.
+3. **Escape hatches with semantics.** Watchers support explicit override tags (e.g. an `[easy-by-design: <reason>]` tag that suppresses the effort-anchoring scan) — the override forces a *stated reason*, which is the point. Plus per-watcher env-var kill switches for genuinely broken days.
+
+### Full Strength from Day One
+
+The obvious deployment strategy for a new watcher is a soak: run it alarm-only for two weeks, promote to blocking if the log shows real catches. This system used that strategy — and retired it.
+
+The reasoning: if your iteration loop is same-day (a misfire gets flagged in session and fixed within hours), a two-week probation buys nothing — and costs something real. A rule that exists but doesn't enforce *feels like a dumbed-down version of itself*, and you stop trusting that new rules mean anything. Under blocking, false positives announce themselves immediately and loudly — which is the detection mechanism, replacing the log-review step entirely.
+
+So: new watchers ship blocking on day one, with the loop guard and the kill switch. Misfires get fixed when they bite. Logs stay for tuning, not for earning promotion. The exception policy is deliberately empty: if a check is too noisy to fix same-day, the answer is to narrow the check, not to park it in alarm-only limbo.
+
+### Hook Liveness Audits
+
+The most dangerous guard state isn't "buggy" — it's **armed and dead**: wired in config, green in tests, and never fired on a real session. You believe you're protected; you aren't.
+
+The canonical incident: a voice-drift watcher passed 7/7 tests for three weeks while being production-dead the entire time. It filtered transcript entries by a field that the hook author *assumed* real entries carry — and the hand-written test fixtures dutifully included that field. Real transcripts don't. Every production run scanned zero text and exited clean.
+
+Two disciplines fall out of that:
+
+1. **Fixtures must be sampled from production transcripts, not hand-written to the hook's assumptions.** A fixture that mirrors your mental model verifies your mental model, not reality. Pull real transcript lines, scrub them, and assert against those.
+2. **Run a periodic liveness audit:** for every wired hook, check the evidence that it has ever fired outside tests — log entries, block records, alarm lines. "Armed but never fired" on a hook that *should* fire weekly is a red flag, not a comfort. Keep the audit as a permanent script, not a one-off.
+
+The complement is a **precision audit**: for watchers that *do* fire, periodically grade a sample of real fires as true/false positives. A watcher running at 90%+ false positives is teaching the model to ignore it — tune the pattern or narrow the scope.
+
+### Corrections Are Recall Tests
+
+When the developer corrects a behavior that a watcher already exists for, the first question isn't "how do I fix the behavior" — it's **"which guard should have caught this, and why didn't it?"** That question is how dead and miscalibrated watchers get found. False positives announce themselves under blocking; false negatives only surface through human corrections — so each correction doubles as a free recall test for the fleet.
+
+---
+
 ## The 10-Stage Security Lifecycle
 
 ### The Problem
@@ -609,17 +813,18 @@ The scanning strategy uses two pattern layers (shared across all enforcement poi
 
 Those patterns run at multiple enforcement points: every file write (PostToolUse hook), every commit (pre-commit git hook), and — for content scanning — every tool result that returns to Claude's context. The defense-in-depth principle means catching a secret at any stage is a win.
 
-### Content-Scanning Tripwire on Tool Results
+### The Secret-Defense Stack (Four Layers Plus Two Guards)
 
-A separate enforcement point: a PostToolUse content scanner that fires on any tool result returning to Claude's context (Bash output, file reads, MCP responses) and matches against the same pattern library. When a match is found, it logs a redacted alarm to `~/.claude/secret-leak-alarms.log` and emits a system-reminder. This catches the class of leak where a secret arrives *into* context unexpectedly — for example, a misbehaving CLI echoing a token in its error output, or an MCP tool returning a database connection string in a metadata response.
+Hardcoded-secret scanning catches what *you* write. A separate class of leak is secrets *moving through the AI's context* — an MCP tool returning a connection string in a metadata response, a build log echoing env vars, a process listing exposing a token in argv. Once a value enters context, it's in the transcript on disk and in the API request stream: treat it as leaked and rotate. The defense stack, learned one real leak at a time:
 
-The scanner ships in two phases:
+- **L1 — scope the source credential.** The API token the AI's tooling uses gets the narrowest permission set that still works (write + deploy, no sensitive reads). Even if every other layer fails, the platform rejects the sensitive read server-side.
+- **L2 — whitelist-by-default on MCP read tools.** After several leaks through *different* tools of the same infrastructure MCP (env-var listing, key listing, database details, deployment logs), per-tool blocklisting proved unwinnable — each patch missed the next vector. The durable shape: a PreToolUse guard that blocks every tool on that server unless explicitly whitelisted, with per-action and per-parameter discrimination (the deployment-status tool passes *only* when its include-logs parameter is absent — build logs render every env var in plaintext).
+- **L3 — inbound content scanner with auto-redact.** A PostToolUse scanner matches every tool result against the pattern library and rewrites high-severity matches to `<REDACTED:label>` *before the model reads them*, using the platform's tool-output rewrite primitive. Lower-severity matches alarm to a log.
+- **L4 — outbound input scanner.** The mirror image: the same patterns run against tool *inputs* (shell commands, file writes, MCP payloads) and block high-severity matches before they execute. Catches the AI about to echo a secret into a file or command.
+- **Argv guard.** Blocks shell commands that expand secret-shaped variable names (`$X_TOKEN`, `${Y_SECRET}`) in arguments — argv is kernel-visible to any process listing, so even a "safe" wrapper leaks if the value passes through arguments. Auth headers go through a wrapper that feeds the secret via stdin config, never argv.
+- **Process-env guard.** Blocks process-listing flags that print other processes' environments (`ps eww` and friends) — long-running services hold tokens in env, and one diagnostic command lands them in context.
 
-1. **Alarm-only.** Logs and reminds, but the value has already entered context — rotation is required. This is the cheaper first cut: no risk of breaking legitimate content, generates evidence about which patterns and which tools are real-world fire sources.
-
-2. **Auto-redact.** Uses the PostToolUse `updatedToolOutput` rewrite primitive (newer Claude Code versions) to redact matches in place before Claude sees the tool result. Prevents the leak instead of just recording it.
-
-The two-phase approach mirrors the [Two-Phase Hook Migrations](#two-phase-hook-migrations) pattern — soak in alarm mode to gather evidence about false positives and pattern-coverage gaps before flipping to enforcement.
+**The persistence gotcha that motivated half of this:** when a tool result exceeds the inline size cap, the platform writes the *full response to disk* and hands the model a truncation notice. The worst real leak here came not from the oversized MCP response itself — the model never saw it — but from a later `grep` over the persisted file, which pulled plaintext tokens straight into context, bypassing the truncation. Treat the tool-results spool directory as credential-class: a retention sweep prunes it on a timer, and a warning hook fires on any read targeting it. If you're about to grep a persisted tool result to debug an old session, the answer almost always lives in the original system instead.
 
 ### Pre-Commit Git Hook
 
@@ -1154,6 +1359,11 @@ Flag anything that looks stale: outdated tool versions, patterns superseded by n
 
 A dedicated `/memory-audit` skill can automate this — scanning topic files for mentions of files, skills, MCPs, or hooks that no longer exist and reporting findings before making changes.
 
+Two mechanical complements close the loop:
+
+- **Session-start TODO verification.** The memory index carries an "active TODOs" list that goes stale fastest of all — items get done and never crossed off. A SessionStart hook feeds the list plus recent git history to a cheap one-shot model call, which returns STILL_APPLICABLE / LIKELY_DONE per item. Stale items get flagged before they misdirect the session's first move.
+- **Fleet-wide staleness sweep.** A periodic skill walks *every* project's memory index, verifies active TODOs against that repo's actual git history, and reports a table. Per-project audits catch drift in the projects you visit; the fleet sweep catches it in the ones you haven't opened for a month.
+
 ### Auto-Consolidating Memory
 
 Knowledge files accumulate near-duplicates over time. Two sessions both observe "always run tests before committing" and both write a `feedback_*.md` file. A few weeks in, the topic directory has half a dozen overlapping entries — and at session start, the AI loads them all, paying the token cost on every turn for content that should have been one consolidated file.
@@ -1203,6 +1413,40 @@ When implementing state persistence, explicitly choose the right tier. Mixing th
 | Database (SQLite/Postgres) | Everything | Anything users create or that took effort |
 
 **Rule:** If it took an API call, user input, or >2 seconds to generate — persist to DB immediately. AI-generated artifacts (summaries, analysis) must be saved the moment they're produced. Server memory is not persistence.
+
+---
+
+## Context Economics
+
+### The Problem
+
+A mature harness accumulates instructions: global preferences, always-on rules, memory indexes, skill descriptions. Each addition is individually justified; collectively they become a fixed tax — loaded into *every* session, re-sent on *every* API turn. Million-token context windows make this survivable, which is exactly the danger: nothing forces the cleanup, so the load only grows. An audit here found ~50k tokens of instructions loading before any work started, and the growth curve pointed up.
+
+### Audit First, Then Diet
+
+Measure before trimming. Sum the bytes of everything that auto-loads at session start (global config, unscoped rules, memory index, skill descriptions — roughly 4 characters per token) and rank by size. Two findings recur:
+
+1. **The weight is history, not instructions.** Rule files accumulate incident write-ups, capture dates, research citations, and "why we built this" narratives. That material is valuable — and it rides along as instructions in every session, in every project, forever.
+2. **Summaries duplicate their rules.** The global config carries a paragraph summarizing each rule *and* the full rule loads anyway. Both arrive in every session.
+
+### Progressive Disclosure for Rules
+
+The same principle that makes skills work (a one-line description always loaded; the full body loaded on invocation) applies to behavioral rules:
+
+- **The always-on core** keeps the instruction: trigger, behavior, enforcement pointer, escape hatches.
+- **A companion file** (outside the auto-loaded directory) takes the history: incident chronicles, provenance, research citations, deep operational detail that's only needed when *working on* the rule. The core ends with a pointer to it.
+- **Global-config summaries shrink to identity + trigger + pointer** wherever the full rule loads anyway. Sections with no always-on rule behind them keep their full text — for those, the summary *is* the rule.
+
+Nothing is deleted; everything moves one pointer away. The diet here cut the per-session instruction load by ~13% in an afternoon with zero behavior change — and, more importantly, established the pattern that keeps the next six months of rule-writing from re-inflating it.
+
+### Day-to-Day Token Discipline
+
+The recurring-cost mindset extends into the session itself — every tool call is a full-context round-trip:
+
+- **No file re-reads.** Note structure and line numbers on first read; re-read only changed sections (offset + limit), never the full file.
+- **Targeted reads on large files.** Grep first to locate, then read the relevant window. Plan files, handoffs, and session logs are the repeat offenders.
+- **Prefer diffs over rewrites.** Editing a file sends the diff; rewriting sends the entire file as output — at output-token rates.
+- **Big window ≠ free context.** A million-token window changes what's *possible* (long autonomous runs, whole-repo reasoning), not what's *efficient*. Prompt caching absorbs much of the per-turn cost, but cache windows expire — the instruction tax gets re-paid all day long.
 
 ---
 
@@ -1360,58 +1604,53 @@ This sounds obvious, but AI assistants default to giving instructions rather tha
 
 ---
 
-## Model Routing
+## Model & Effort Routing
 
 ### The Problem
 
-Using the most expensive model for everything wastes money. Using the cheapest model for everything produces bad results on complex tasks.
+Using the most expensive configuration for everything wastes money. Using the cheapest for everything produces bad results on complex tasks. The interesting part is that the right *shape* of the answer changed as model pricing evolved.
 
-### Start Cheap, Escalate by Signal
+### The 2026 Inversion: Frontier-Default, Calibrate Effort, Route Down
 
-Default to a capable but cost-efficient model for daily work. Escalate to the most powerful model only when you detect specific signals:
+This system originally ran a cheaper mid-tier model as the session default and escalated *up* to the frontier model on specific signals. That design made sense when the top tier cost ~3× the mid tier. By mid-2026 the gap compressed to roughly 1.7×, and the frontier models gained an adaptive **effort knob** — which changed the optimal layout entirely:
 
-| Signal | Why It Needs Escalation |
+- **The session runs on the frontier model.** The cost lever is no longer *which model* but *how hard it thinks per turn*.
+- **Effort is calibrated per turn.** Routine mechanical turns (config edits, git operations, file search, plan-following) drop to low/medium effort — the same saving the cheap-session design bought, with no session split and no quality cliff when a routine turn suddenly isn't. The default working tier is high; hard reasoning bumps to the top setting, then drops back.
+- **Subagents route *down*, never up.** With the smartest model already in the session, subagents exist for three reasons only: **isolation** (fresh context that won't inherit the session's anchor — reviewers, evaluators), **parallelism** (independent work running concurrently), and **down-routing** (mechanical read/search/status work that shouldn't burn frontier-priced session tokens).
+
+The bump-effort signals are the same ones that used to justify model escalation:
+
+| Signal | Why It Needs More Reasoning |
 |--------|------------------------|
 | 3+ interacting constraints | Too many variables to hold in one pass |
-| 2+ failed approaches | Problem likely needs deeper reasoning |
-| Cross-domain architecture (3+ modules across frontend + backend + infra) | Coordination complexity |
-| Security audit with nuanced judgment | Stakes are too high for a cheap model |
-| Contradictory requirements | Need to reconcile conflicting constraints |
+| 2+ failed approaches on the same problem | Likely needs deeper reasoning, not another guess |
+| Cross-system work (3+ modules across frontend/backend/infra) | Coordination complexity |
+| Adversarial / contrarian / multi-perspective review | Depth is the product |
+| Security audit with judgment calls | Stakes too high for shallow passes |
+| Novel architecture without prior art | No pattern to retrieve; has to be reasoned |
 
-**Don't escalate for:** simple code edits, file search, config changes, git operations, debugging with clear error messages, single-file changes.
+A self-check fires at natural breakpoints: *3+ constraints? Just failed a fix? Cross-system?* — if yes, bump effort for that reasoning, then drop back.
 
-### Subagent Model Selection
-
-When delegating to subagents, match model to task type:
+### Subagent Tier Rules
 
 | Task Type | Model Tier | Examples |
 |-----------|------------|---------|
-| Reading + summarizing | Cheapest | File search, log analysis, status checks, context gathering |
+| Reading + summarizing | Cheapest | File search, log analysis, status checks, web research |
 | Judgment + opinions | Mid-tier | Code review, security analysis, verification |
-| Critical evaluation | Best | Independent evaluator (anti-rationalization requires maximum reasoning) |
+| Critical evaluation | Best | Independent evaluator (anti-rationalization needs maximum reasoning) |
 | Multi-perspective synthesis | Best | Council chairman (reconciling contradictory arguments) |
 
-The evaluator is always the best model regardless of session model — that's where reasoning quality has the highest impact.
+The evaluator is pinned to the best tier even when that *matches* the session model — the pin survives a future session-model change.
+
+**Subagent cost discipline:** subagents are read-only or write-once — find information, review code, produce a report. Never delegate implementation loops (read → edit → test → iterate) to a subagent; the context re-reading makes token growth quadratic. And cap subagent prompts (~150 words for report tasks, ~250 for research) — verbose delegation prompts are pure overhead.
 
 ### Mechanical Enforcement
 
 A hook can enforce model selection by blocking subagent calls that don't specify an explicit model parameter. This prevents accidental use of expensive models for trivial tasks and ensures the routing rules are followed consistently.
 
-**Cheap synchronous verifiers without subagent overhead.** Subagents pay a fixed cost — separate context, tool-loading round-trip, transcript persistence. For quick yes/no checks against a fresh prompt (pattern match, JSON-shape verification, classifier-style decisions), spawning a full subagent is overkill. A thin shell wrapper around `claude -p` with `--strict-mcp-config` (suppresses MCP forking, the dominant cost) and `--model claude-haiku-*` gives you a synchronous one-shot call to the cheapest tier from within a hook or skill — useful for "should this commit message trigger the deferral guard?" or "does this diff need a re-evaluation?" decisions. The trade: you lose subagent state and tool access, so use it only where the answer is "respond once based on the prompt" with no follow-up.
+**Cheap synchronous verifiers without subagent overhead.** Subagents pay a fixed cost — separate context, tool-loading round-trip, transcript persistence. For quick yes/no checks against a fresh prompt (pattern match, JSON-shape verification, classifier-style decisions), spawning a full subagent is overkill. A thin shell wrapper around `claude -p` with `--strict-mcp-config` (suppresses MCP forking, the dominant cost) and the cheapest model gives you a synchronous one-shot call from within a hook or skill. The trade: you lose subagent state and tool access, so use it only where the answer is "respond once based on the prompt" with no follow-up. One operational note: budget hook timeouts for the CLI's cold start (~30s), or the verifier times out every session while looking perfectly healthy in tests.
 
-### Effort Escalation Protocol
-
-Modern Claude models expose an "effort" setting that trades tokens for reasoning depth (low → medium → high → xhigh). Higher effort levels emit more thinking tokens, billed as output, which can be 5× the cost of input tokens. Pinning the highest effort globally is wasteful — most turns don't need it.
-
-The pattern:
-
-- **Session default:** high effort (good reasoning, reasonable cost)
-- **Escalate to xhigh immediately before** spawning a deep-reasoning subagent (evaluator, contrarian review, architecture synthesis for 3+ constraints) — Claude Code now exposes an interactive `/effort` slider for this; the value also appears in hook subprocess env as `$CLAUDE_EFFORT`, so hooks can gate behavior by tier
-- **Drop back** to the default after the subagent returns
-
-Think of effort escalation like the subagent model routing — tiered by signal, not pinned. The discipline is the same: match the cost to the actual reasoning complexity of the task.
-
-**Watch for the silent drift:** effort settings persist in config files (`settings.json`), so a one-time toggle can quietly stay pinned across every session. Periodic config audits catch this (see [Periodic Harness Audit](#periodic-harness-audit)).
+**Watch for the silent drift:** effort settings persist in config files, so a one-time toggle can quietly stay pinned across every session. Periodic config audits catch this (see [Periodic Harness Audit](#periodic-harness-audit)).
 
 ---
 
@@ -1459,6 +1698,7 @@ Skills are markdown-defined workflows that get loaded into context when invoked.
 | `/clear-and-continue` | Mid-session context rotation — same task, same project, fresh context (drops handoff + ends with `Then run: /clear`) |
 | `/memory-audit` | Detect stale references in knowledge files |
 | `/memory-consolidate` | Auto-merge near-duplicate memory files via subagent decisions; snapshot + reversible archive |
+| `/memory-staleness` | Fleet-wide sweep: verify every project's active TODOs against its git history |
 | `/plan-sprint` | Sprint planning with security posture check |
 | `/harness-audit` | Periodic config + ecosystem audit (research delta + drift report) |
 
@@ -1502,6 +1742,16 @@ The best skills:
 - **Encode hard-won knowledge** (the "why" behind each step)
 - **Include verification steps** (don't trust the AI to self-verify)
 - **Adapt to context** (read project files, don't assume stack)
+
+Three authoring conventions that compound across a whole skill library:
+
+1. **Every non-trivial skill carries a Gotchas section** — and it's the highest-signal part. Each entry is a direct counter-instruction against the model's *pull*: "You'll want to do X here. Don't — here's the failure. Do Y instead." One entry per **observed** failure, appended when the skill actually misfires — never pre-populated with hypotheticals. The section grows with the skill's real history.
+2. **Show the output, don't describe it.** When a skill produces structured output — a table, a report, a verdict format — include a literal example in the skill body, not a prose description of the format. Models reproduce a shown example far more reliably than they follow a described one.
+3. **Triggers must be loud.** The description line decides whether the skill ever fires, and models skim past subdued, tasteful one-liners. List the literal phrases a request would contain. A skill that never triggers is dead weight no matter how good its body is — re-check trigger lines whenever a skill silently fails to fire.
+
+One exception to the "playbooks, not personas" rule: skills where multiple perspectives *are* the mechanism (advisory councils, red-team reviews) keep their personas. There the persona is the engine, not decoration.
+
+**Adopt native features before building wrappers.** When the platform ships a native workflow that overlaps a custom skill idea (deep-research orchestration, plan modes, output styles), adopt the native version and customize at the *input* (how you phrase the ask, what context you prime) rather than wrapping it. Wrappers add maintenance surface for marginal gain and break on platform updates. Build custom only after the native version demonstrably underperforms on your real usage.
 
 ---
 
@@ -1620,10 +1870,10 @@ Claude Code hooks fire at specific events. Here's what each event is good for:
 | `PostToolUse` | After a tool runs | Auto-formatting, secret scanning, evaluate reminders. Can return `updatedToolOutput` to **rewrite** tool output (e.g. redact secrets in place) — not just block or allow |
 | `PreCompact` | Before context compaction | Active handoff — capture state + instruct AI to write handoff file |
 | `PostCompact` | After context compaction | Log compaction event + verify pre-compact handoff landed |
-| `PermissionRequest` | A permission dialog is about to be shown (matcher: tool name) | Log the structured `permission_suggestions` payload (rules + behavior + destination) at request-time. Richer than transcript scanning — see [Two-Phase Hook Migrations](#two-phase-hook-migrations) |
+| `PermissionRequest` | A permission dialog is about to be shown (matcher: tool name) | Log the structured `permission_suggestions` payload (rules + behavior + destination) at request-time. Richer than transcript scanning — see [Replacing Hooks](#replacing-hooks-parallel-evidence-not-blind-swaps) |
 | `PermissionDenied` | A tool call is denied by the auto-mode classifier (matcher: tool name) | Per-event denial logging for auto-mode rejections. Note: does **not** fire on settings.json deny-rules, manual prompt denials, or PreToolUse hook blocks — those need a Stop-hook backstop |
 | `PostToolBatch` | A parallel tool batch resolves | Aggregate timing/observability across fan-out calls (e.g. parallel-audit, council) |
-| `Stop` | When the AI stops generating | Post-completion verification triggers, git discipline checks |
+| `Stop` | When the AI stops generating | Behavioral output watchers (see [The Watcher Fleet](#the-watcher-fleet)), post-completion verification, git discipline checks. Exit 2 blocks the stop and bounces the AI back with an instruction |
 | `SessionEnd` | Session ends (matcher: `clear\|logout\|prompt_input_exit\|other`) | Save-and-move reminders, uncommitted-changes warnings |
 | `StopFailure` | Generation halts on a recoverable error (matcher: `rate_limit\|authentication_failed\|billing_error\|invalid_request\|server_error\|max_output_tokens\|unknown`) | Categorised error logging |
 | `UserPromptSubmit` | When the developer sends a message | Input validation, context injection |
@@ -1667,26 +1917,13 @@ Supported sequences: OSC 0/1/2 (titles), OSC 9 (iTerm2/WezTerm/Windows Terminal)
 
 Use it for ambient feedback that doesn't demand attention but is genuinely useful when noticed. Avoid for chatty events that fire often — desktop notification fatigue is real, and OSes start collapsing them once a stream becomes background noise.
 
-### Two-Phase Hook Migrations
+### Replacing Hooks: Parallel Evidence, Not Blind Swaps
 
-When a new hook event lets you replace an older hook with a more accurate or efficient one, don't swap directly. Run both in parallel for ~1 week with the new hook in **log-only mode** — no user-visible output, just appends to a file. At the end of the week, diff the new log against what the old hook caught:
+When a new hook event lets you replace an older hook with a more accurate one, don't swap directly — run both in parallel and diff what each caught before retiring the old one. A real two-round example: a structured permission-denial event looked like a clean replacement for a transcript-scanning Stop hook, but the parallel logs revealed it only fires for one denial type out of four. The "obvious win" would have silently dropped three-quarters of the coverage. (Round three, weeks later: a richer request-time event accumulated ~330 logged entries with zero unique catches from the old scanner — *that* was the evidence to retire it. Keep retired hooks on disk with a dated suffix so the retirement is reversible.)
 
-- **Detections match cleanly** → retire the old hook, promote the new one to active mode
-- **New hook misses cases** → keep the old one, treat the new one as a supplementary signal
-- **New hook catches *more* than the old** → promote the new one and document what was being missed
+Note the scope: parallel evidence applies to **replacements**, where the old hook keeps protecting throughout the trial. It does *not* apply to brand-new guards — soaking a new guard in log-only mode means running unprotected during the soak, which is why that practice was retired (see [Full Strength from Day One](#full-strength-from-day-one) and [Retired Patterns](#retired-patterns)). The dividing line: is something still enforcing while you gather evidence?
 
-Why this works: hooks are part of the safety surface, and silent regressions are exactly the failure mode you can't observe by code-review alone. Running both concurrently for a week generates the evidence to retire the old one with confidence. Costs ~5 minutes of post-week analysis; prevents days of flying blind on a behaviour change that isn't visible until something fails.
-
-Real example, two rounds:
-
-1. **Round 1:** `PermissionDenied` event added alongside the Stop-hook transcript scanner. After a week, the parallel logs revealed `PermissionDenied` only fires for auto-mode classifier denials — *not* for settings.json deny-rules, manual prompt rejections, or PreToolUse hook blocks. **Decision: keep both** as defense in depth, each catching a different denial type.
-2. **Round 2:** `PermissionRequest` event piloted (richer than `PermissionDenied` — fires before the dialog with structured `permission_suggestions` containing tool, rules, behavior, destination). Goal: retire the transcript scanner for the standard-prompt-denial case once the structured payload is verified to give equivalent or better detection.
-
-The two-phase discipline is what makes the difference: the first round looked like a clean win on paper, but the parallel week exposed the scope limitation before any safety regression landed.
-
-**Round 3 — retirement with parallel-log evidence.** After ~2 weeks of `PermissionRequest` running alongside the transcript scanner, the structured log accumulated ~330 entries; the Stop scanner emitted zero unique nudges the new hook didn't already cover. Decision: retire the transcript scanner. The discipline holds in reverse — same parallel-evidence check that justifies adopting a new hook also justifies removing an old one. Keep the disabled file on disk with a `.disabled-YYYY-MM-DD` suffix (or revert via git) so the retirement is reversible.
-
-**Companion check before silent caps:** when a Claude Code release adds a fire-cap or rate-limit on a hook event (e.g., the v2.1.143 cap of 8 consecutive Stop-hook blocks per turn), audit your existing hooks' lifetime fire counts *before* the cap silently hides chain-fires. If any hook is already close to the cap, the cap will mask a bug rather than report it.
+**Companion check before silent caps:** when a platform release adds a fire-cap on a hook event (e.g., a cap on consecutive Stop-hook blocks per turn), audit your existing hooks' lifetime fire counts *before* the cap silently hides chain-fires. If any hook is already close to the cap, the cap will mask a bug rather than report it.
 
 ### Custom Agents
 
@@ -1709,10 +1946,11 @@ The two-phase discipline is what makes the difference: the first round looked li
 |-----------|-------|
 | Allow rules | ~170 |
 | Deny rules | ~70 |
-| Hooks | ~50 scripts across 9+ event types (Claude Code exposes ~30 events; these are the most useful) |
-| Skills | ~34 custom + ~50 via plugins |
-| Agents | 8 custom definitions |
-| Path-scoped rules | ~34 files |
+| Hooks | ~65 scripts across 9+ event types, ~28 of them blocking (all routed through the quiet JSON channel) |
+| Behavioral output watchers | ~15 Stop-hook scanners on the AI's own output |
+| Skills | ~33 custom + ~50 via plugins |
+| Agents | 9 custom definitions |
+| Rules | ~47 files — ~27 always-on (post-diet), ~20 path-scoped |
 | Plugins | ~25 enabled |
 | MCP servers | 8-10 connected |
 
@@ -1737,6 +1975,23 @@ The two-phase discipline is what makes the difference: the first round looked li
 5. **Layer your defenses.** No single check catches everything.
 
 6. **Build skills for repeatable processes.** If you explain the same workflow twice, it should be a skill.
+
+---
+
+## Retired Patterns
+
+A methodology that only ever adds patterns isn't being tested against reality. These earlier patterns appeared in previous versions of this document, ran in production for months, and were deliberately retired. They're kept here because the *reasons* generalize better than the patterns did.
+
+| Retired Pattern | Replaced By | Why |
+|---|---|---|
+| **Batch-of-3 execution with checkpoints** | [Chapter-based execution](#chapter-based-execution) | The pauses were rubber stamps — "continue" was the answer 100% of the time. Decisions moved to the edges; the middle became autonomous. |
+| **Start cheap, escalate to the frontier model** | [Frontier-default + effort calibration](#the-2026-inversion-frontier-default-calibrate-effort-route-down) | Price compression (top tier ~1.7× mid, down from ~3×) plus the per-turn effort knob made the session split cost more than it saved. |
+| **Soak new guards in alarm-only mode (~2 weeks)** | [Full strength from day one](#full-strength-from-day-one) | With a same-day fix-on-misfire loop, the probation bought nothing and made new rules feel like dumbed-down versions of themselves. Loop guards + kill switches made blocking-by-default safe. |
+| **Manual confirmation before the post-rotation commit** | Auto-commit with an opt-out flag | Zero refusals over months of use. A confirmation that's never declined is a ritual, not a gate. |
+| **Rubber-stamp asks at transitions** ("Push now?", "Fix all 7?") | [Gate agents](#gate-agents-at-workflow-transitions) | Same diagnosis: 100% "yes" rates mean the question verifies nothing. A cheap agent does the actual verification instead. |
+| **Per-tool blocklists on a leaking MCP server** | [Whitelist-by-default](#the-secret-defense-stack-four-layers-plus-two-guards) | Each leak patched one tool; the next leak came through a different one. Block-by-default ended the class. |
+
+The meta-pattern across all six: **a checkpoint that never changes the outcome is friction wearing a safety costume.** Measure refusal rates and catch rates; when they're zero over months, replace the human ask with mechanical verification — and spend the human's attention where it actually changes outcomes.
 
 ---
 
