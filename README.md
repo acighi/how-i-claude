@@ -16,6 +16,7 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 |---------|-------------------|---------|
 | **The Planning Pipeline** | Scope creep, building before understanding | [Link](#the-planning-pipeline) |
 | **Chapter-Based Execution** | Mid-plan "continue?" checkpoints that fragment autonomous runs | [Link](#chapter-based-execution) |
+| **Ship Complete, Not Phased** | Reflexive MVP/phasing defaults that ship half a solution | [Link](#ship-complete-dont-default-to-phasing) |
 | **The Decision Gate** | Questions surfacing mid-work, answered late or never | [Link](#the-decision-gate) |
 | **File-Based Progress Tracking** | Losing place after context compaction | [Link](#context-survival) |
 | **The Stack Frame Pattern** | Nested sub-plans causing parent plan amnesia | [Link](#nested-sub-plans-the-stack-frame-pattern) |
@@ -34,9 +35,12 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **Red Lines** | Safety rules lost on context compaction | [Link](#red-lines) |
 | **Pre-emptive Self-Run Routing** | Friction loop when AI proposes commands the harness will categorically deny | [Link](#pre-emptive-self-run-routing) |
 | **Model & Effort Routing** | Paying frontier prices for mechanical turns, starving hard reasoning | [Link](#model--effort-routing) |
+| **Targeted Orchestration** | Multi-agent fan-outs burning 4-15× tokens on routine tasks | [Link](#multi-agent-orchestration-targeted-not-default) |
 | **The Watcher Fleet** | Behavioral rules the AI follows 60-70% of the time instead of 100% | [Link](#the-watcher-fleet) |
+| **Block at Irreversibility, Log the Rest** | Blocking watchers on judgment calls create constant friction | [Link](#the-mid-2026-recalibration-block-only-at-unrecoverable-harm) |
+| **Personality, Not Word Lists** | Style rules enforced by regex saturate and get ignored | [Link](#enforcing-communication-style-personality-not-word-lists) |
 | **Full Strength from Day One** | Alarm-only probation making new guards feel like dumbed-down versions of themselves | [Link](#full-strength-from-day-one) |
-| **Hook Liveness Audits** | Guards that are wired, tested, green — and have never fired in production | [Link](#hook-liveness-audits) |
+| **Hook Liveness Audits** | Guards that are tested and green — but dead in production, or never wired at all | [Link](#hook-liveness-audits) |
 | **Context Economics** | Instruction load silently growing until every session starts heavy | [Link](#context-economics) |
 | **Open Questions Live in Chat** | Questions buried in generated files the developer never reads | [Link](#the-decision-gate) |
 | **Skills & Plugins Ecosystem** | Reinventing workflows every session | [Link](#the-skills--plugins-ecosystem) |
@@ -45,6 +49,7 @@ This isn't a tutorial. It's a system of patterns, conventions, and guardrails th
 | **Design Discovery** | Starting UI work without visual direction | [Link](#design-discovery) |
 | **Learning Promotion Pipeline** | Lessons learned once, forgotten everywhere else | [Link](#the-learning-promotion-pipeline) |
 | **Staleness Check** | Knowledge files drifting from reality over time | [Link](#periodic-staleness-check) |
+| **Cross-Project Memory Recall** | Lessons trapped in one project's memory silo | [Link](#cross-project-memory-recall) |
 | **Config Drift Guard** | Settings changes going uncommitted and diverging | [Link](#config-drift-guard) |
 | **Assumption Verification** | AI silently applying training data as fact | [Link](#assumption-verification) |
 | **Performance Audit** | No systematic way to measure and track app performance | [Link](#performance-audit) |
@@ -122,8 +127,9 @@ mindmap
       Then an autonomous run
     Mechanical Enforcement
       Prose rules drift, hooks do not
-      Watchers scan the AI's own output
-      Block, do not advise
+      Block at irreversibility
+      Coach taste from the prompt layer
+      Watchers log drift to a digest
 ```
 
 1. **Silent automation** — Hooks, rules, and agents run invisibly. The developer shouldn't have to remember to run security scans or format code. If you have to remember to do it, you'll forget.
@@ -136,7 +142,7 @@ mindmap
 
 5. **Front-loaded decisions, then autonomy** — Every task opens by collecting the decisions the developer actually needs to make — asked one at a time, with a recommendation. After the last answer, the run is autonomous: no "continue?" checkpoints, no rubber-stamp asks. The test for whether a question deserves the developer's attention: *would they just rubber-stamp the AI's pick?* Then it's not their question.
 
-6. **Mechanical enforcement over prose rules** — A behavioral rule written in CLAUDE.md gets followed maybe 60-70% of the time; under context pressure it drifts. A hook fires 100% of the time. Every rule that matters ends up with a mechanical backstop — including rules about the AI's *own communication*, enforced by watchers that scan its output before it reaches the developer.
+6. **Mechanical enforcement over prose rules** — A behavioral rule written in CLAUDE.md gets followed maybe 60-70% of the time; under context pressure it drifts. A hook fires 100% of the time. Every rule that matters ends up with a mechanical backstop — but the backstop's *action* is tiered: hard blocks at irreversibility boundaries and for deterministic checks; prompt-layer steering plus quiet drift logging for judgment and taste. Knowing which tier a rule belongs to turned out to be the hard part (see [The Watcher Fleet](#the-watcher-fleet) for the recalibration that settled it).
 
 ---
 
@@ -167,7 +173,7 @@ flowchart LR
 | **Brainstorming** | Explore intent, requirements, design options | Design notes, tradeoffs |
 | **Writing Plans** | Create bite-sized implementation plan | `docs/plans/YYYY-MM-DD-feature.md` |
 | **Plan Exit Review** | Validate plan before any code is written | `docs/contracts/` with acceptance criteria |
-| **Executing Plans** | Implement in batches of 3 tasks, pause for review | Working code + verification output |
+| **Executing Plans** | Chapter-based: decisions at the edges, autonomous middle | Working code + verification output |
 
 **Working Backwards** is optional — use it when the feature involves external dependencies (partner APIs, store submissions, payment processors, regulatory approvals). For internal-only work, start at Brainstorming.
 
@@ -260,6 +266,14 @@ While executing tasks, append timestamped work notes directly in the plan file:
 
 This complements checkboxes (task-level status) with step-level detail. On resume after compaction, the output log tells you exactly where you stopped mid-task — not just which task, but which step within it.
 
+### Ship Complete, Don't Default to Phasing
+
+AI assistants reflexively propose staged delivery: "phase 1 now, harden later", "ship a light version first and soak it", "smaller diff, easier to review." Each sounds prudent; as a *default* it ships half-solutions and quietly schedules rework as if it were free. The counter-rule: build the full, correct solution the first time. If it breaks, you see it and fix it — that loop is faster than a phasing plan.
+
+Phasing is the right call only when something genuinely warrants it: irreversible or destructive operations, real external blast radius (partners, users at scale, regulatory), an experiment that's costly to reverse, or a hard external deadline. "To be safe", "smaller diff", and "easier to review" are not on that list — they're the model's cost-of-action bias wearing a process costume, the same bias that makes recommendations drift toward the easiest option (see [Recommend the Best, Not the Easiest](#recommend-the-best-not-the-easiest)).
+
+This generalizes [Full Strength from Day One](#full-strength-from-day-one) — originally a rule about shipping new guards at full enforcement — to all work.
+
 ---
 
 ## The Decision Gate
@@ -309,11 +323,16 @@ When a question surfaces during the autonomous run, apply a blocking test: **wou
 
 ### Open Questions Live in Chat, Not in Files
 
-Corollary rule with its own enforcement: any question or info-need for the developer is stated *in the conversation* the moment it arises — never only written into a plan, handoff file, or contract draft on the assumption that the developer will read it there. They won't. A Stop-hook backstop scans files written each turn for question shapes (`TODO`, `TBD`, "decision needed") and blocks the AI from ending its turn until each one is surfaced in chat.
+Corollary rule with its own enforcement: any question or info-need for the developer is stated *in the conversation* the moment it arises — never only written into a plan, handoff file, or contract draft on the assumption that the developer will read it there. They won't. A watcher scans files written each turn for question shapes (`TODO`, `TBD`, "decision needed") that never appeared in chat — one of the fleet demoted from blocking to drift-metric in the recalibration (see [The Watcher Fleet](#the-watcher-fleet)); the rule itself is steered from the prompt layer. Parked questions re-surface with their age attached ("analytics access — still open, day 4") so nothing fades quietly.
 
 ### Enforcement
 
-A prompt-submit hook arms a per-session flag when a new instruction arrives; a pre-edit hook blocks any file modification until the gate block has appeared in the AI's output. The hook can verify the gate *exists* — it can't verify the AI actually waited for answers. That part is a prose rule, which is exactly why the gate block is designed to be glanceable: a missing question is visible at a glance in a one-screen inventory.
+A prompt-submit hook arms a per-session flag when a new instruction arrives; a pre-edit hook blocks file modification until the gate block has appeared in the AI's output. Two calibrations from months of running it:
+
+- **The blocking scope narrowed to risky paths** (auth, payments, secrets, migrations, production, deploy config). The gate is still posted on every task — but routine edits no longer wait on the stamp; enforcement bites only where a silently-wrong assumption is expensive.
+- **The stamp must land where the hook can see it.** Platform gotcha: short between-tool-call messages can ride a narration channel that renders to the developer but never persists to the transcript the hook greps. The fix: carry the stamp in the next tool call's description field, which always persists.
+
+The hook can verify the gate *exists* — it can't verify the AI actually waited for answers. That part is a prose rule, which is exactly why the gate block is designed to be glanceable: a missing question is visible at a glance in a one-screen inventory.
 
 ---
 
@@ -492,6 +511,8 @@ When a delegated reviewer returns FAIL or FLAG, the calling session must not:
 
 The correct response is to surface the verdict verbatim and wait. The canonical incident: a pre-push reviewer returned FAIL, the calling session re-ran the scan locally, found nothing, and pushed. Nothing was actually wrong that time — but the precedent *is* the failure mode.
 
+The gate also pays in the other direction. An independent fix-reviewer, handed only artifacts (the diff and the impact map), caught a real bypass in a just-hardened security guard that the guard's own green test suite had missed — the operator detection required surrounding spaces, so unspaced variants slipped straight through. The catch became new regression cases the same session. A green suite proves the cases you thought of; the skeptic's job is the ones you didn't.
+
 ### Auto-Fix Loop
 
 When evaluation fails:
@@ -523,7 +544,7 @@ Match the tool to what you need to verify:
 
 ## Recommendation Integrity
 
-Code gets an evaluator. Recommendations — "use library X", "go with approach B", "this is safe to ship" — historically got nothing, and they're where AI assistants fail most expensively. Four related defenses, all mechanically enforced by output watchers (see [The Watcher Fleet](#the-watcher-fleet)).
+Code gets an evaluator. Recommendations — "use library X", "go with approach B", "this is safe to ship" — historically got nothing, and they're where AI assistants fail most expensively. Four related defenses, each with an output watcher behind it (see [The Watcher Fleet](#the-watcher-fleet) — most of these watchers now log drift rather than block; the defenses themselves are steered from the prompt layer).
 
 ### Evidence Labeling
 
@@ -562,7 +583,7 @@ The test before recommending: *which option would I want in place six months fro
 
 When the fast option genuinely is right — throwaway prototype, externally-imposed deadline, explicitly accepted debt — say so explicitly: "easy is right here *because* this is scaffolding." Don't smuggle it in.
 
-This applies hardest to **autonomous picks**, where no menu is shown and the developer has no veto moment. The required shape: *"Doing X. Weighed Y — X wins on durability. Interrupt if you'd rather Y."* The named alternative is the structural pause that catches effort-anchoring at emit time. A two-layer watcher enforces it: a regex pass on every turn catches effort keywords justifying a pick ("simplest", "quickest", "minimal", "no real upside") with no durability axis nearby, and a cheap LLM judge at the plan-review gate rates whether each recommendation's *stated* axis is plausible — catching the misdirection case where a durability word is used as cover.
+This applies hardest to **autonomous picks**, where no menu is shown and the developer has no veto moment. The required shape: *"Doing X. Weighed Y — X wins on durability. Interrupt if you'd rather Y."* The named alternative is the structural pause that catches effort-anchoring at emit time. A two-layer backstop watches it: a regex pass on every turn flags effort keywords justifying a pick ("simplest", "quickest", "minimal", "no real upside") with no durability axis nearby — now a quiet drift metric — and a cheap LLM judge at the plan-review gate still gates: it rates whether each recommendation's *stated* axis is plausible, catching the misdirection case where a durability word is used as cover.
 
 ### Hold Position Under Challenge
 
@@ -573,7 +594,7 @@ Models affirm users far more than humans do, and flip correct answers under push
 
 Scope matters: this covers *facts and technical conclusions* only. When the developer overrules on product judgment, risk appetite, or taste — that's their call; accept it without re-litigating.
 
-Enforcement is mechanical and cheap: a Stop-hook watcher fires on the cave signature — a challenge-shaped user message, followed by a flip or praise marker in the reply, with **zero verification tool calls in the turn**. Verify-then-flip passes untouched, so the watcher costs nothing in normal flow and only bites when agreement was unearned. One gotcha worth knowing: softening a hold with "you're right that X, but…" reads as a flip to both the watcher and the human. Structure a hold as claim → evidence → conclusion.
+Enforcement went through both watcher tiers: a Stop-hook detects the cave signature — a challenge-shaped user message, followed by a flip or praise marker in the reply, with **zero verification tool calls in the turn**. Verify-then-flip passes untouched. It ran blocking in its first weeks and now logs to the drift digest (see [the fleet recalibration](#the-mid-2026-recalibration-block-only-at-unrecoverable-harm)); the behavior is held by the rule itself, with the log as its recall test. One gotcha worth knowing either way: softening a hold with "you're right that X, but…" reads as a flip to both the watcher and the human. Structure a hold as claim → evidence → conclusion.
 
 ---
 
@@ -639,7 +660,7 @@ When the developer corrects the AI's approach (explicit: "no, don't do X" / "alw
 - 2026-03-28 | project-name | what was corrected and the right approach
 ```
 
-No announcement, no asking — just log it alongside the normal response. At session end, the save-and-move routine processes corrections into their proper destinations:
+No announcement, no asking — just log it alongside the normal response. At session end, the save routine processes corrections into their proper destinations:
 - **Specific to a project** → project's CLAUDE.md
 - **Cross-project pattern** → global CLAUDE.md or path-scoped rule
 - **Personal preference** → memory file
@@ -647,7 +668,7 @@ No announcement, no asking — just log it alongside the normal response. At ses
 ```mermaid
 flowchart LR
     C["Correction happens<br/>in conversation"] --> L["Silently append to<br/>corrections.md"]
-    L --> S["Session end:<br/>/save-and-move"]
+    L --> S["Session end:<br/>/save-and-end"]
     S --> R{"Route by scope"}
     R -->|project| P["Project CLAUDE.md"]
     R -->|cross-project| G["Global CLAUDE.md<br/>or rule file"]
@@ -697,7 +718,7 @@ Most hook advice targets *tool calls* — block the dangerous command, scan the 
 
 ### The Pattern
 
-Every behavioral rule that matters gets a **watcher**: a Stop-hook script that scans the AI's own output for the rule's failure signature and blocks the turn from ending until the behavior is corrected. The fleet includes watchers for:
+Every behavioral rule that matters gets a **watcher**: a Stop-hook script that scans the AI's own output for the rule's failure signature — and either blocks the turn or logs the drift, depending on the rule's tier (the tiering is the recalibration story below; the fleet started out all-blocking). The fleet includes watchers for:
 
 - Recommendations with zero evidence markers, or no alternatives named
 - Picks justified by effort keywords with no durability axis nearby
@@ -707,11 +728,39 @@ Every behavioral rule that matters gets a **watcher**: a Stop-hook script that s
 - Manual-delegation ("please go run this") when a tool could have done it
 - Jargon-density drift in developer-facing text
 
-Three engineering details make a fleet of ~15 output watchers livable rather than maddening:
+Three engineering details make a fleet of output watchers livable rather than maddening:
 
 1. **Loop guards.** Each watcher blocks at most once per window (measured in transcript lines, per session). A false positive costs one bounce, not an infinite loop. The block message always says what to do *now* — "verify, then re-emit" — never "consider whether…".
 2. **The quiet channel.** A blocking watcher's message is an instruction *to the model*, not information for the developer. Raw exit-2 stderr renders as red error dumps in the transcript — alarming and useless to the human. A thin adapter wraps every blocking hook at registration and converts its stderr into the platform's structured JSON decision channel: the model gets the correction, the developer's transcript stays clean. The guards themselves stay simple exit-2 scripts; only the adapter knows about the transport, so tests keep asserting plain exit codes.
 3. **Escape hatches with semantics.** Watchers support explicit override tags (e.g. an `[easy-by-design: <reason>]` tag that suppresses the effort-anchoring scan) — the override forces a *stated reason*, which is the point. Plus per-watcher env-var kill switches for genuinely broken days.
+
+### The Mid-2026 Recalibration: Block Only at Unrecoverable Harm
+
+The fleet's first year ended with a course correction. With ~15 behavioral watchers blocking, the friction compounded: every block forces the model to redo its final message, a loop-guarded false positive still costs a bounce and a visible rewrite, and judgment-flavored checks ("is this recommendation effort-anchored?", "is this reply too technical?") never converged on false-positive rates low enough to justify that cost. The developer felt it as constant interruption; an independent four-reviewer panel, asked to arbitrate, was unanimous: trim.
+
+The redesign split enforcement by **failure mode, not importance**:
+
+- **Hard blocks stay only where harm is unrecoverable or the check is deterministic.** Secret scanners, push/commit/public-repo guards, self-run routing, credential-read guards, fabricated-test-claim detection — plus deterministic formatting checks (an over-long handed command, a literal `--draft` flag in a PR command) where a regex can't be wrong about the match.
+- **Judgment-flavored watchers demoted to quiet drift metrics.** Nine behavioral scanners now log matches to a drift log and never block. The *rules* still fully apply — they're steered from the prompt layer (persistent instructions, the output style, exemplar-based rule files), which is where taste lives anyway.
+- **The stamp gates scoped to risky paths.** The pre-edit decision-gate and impact-map checks still block — but only on paths where a silently-wrong assumption is expensive (auth, payments, secrets, migrations, production, deploys). Routine edits flow.
+
+Two details make the demotion a redesign rather than a surrender:
+
+1. **A quiet log needs a consumer.** Log-only is half a design: a weekly digest reads every drift log through a cursor and reports per-scanner trends. A log nobody reads is the same as no log — a later audit found two of three drift logs (over a thousand entries) unconsumed weeks after the demotion, which is the "armed and dead" failure from [Hook Liveness Audits](#hook-liveness-audits) wearing a different hat.
+2. **Per-entry evidence, or the trend is unauditable.** A scanner that logs "fired" 245 times with no snippet of what it matched produces a count you can't grade. Each entry now carries the matched line (scrubbed of anything secret-shaped), so the periodic precision pass can separate real drift from noise.
+
+The re-arming criterion is explicit: a watcher gets promoted back to blocking only if the drift trend rises on *trustworthy* data. Rising drift on noisy data is not enough — first fix scanner precision, then collect clean weeks, then re-judge. Reversing a demotion on polluted evidence would re-import the friction on an unproven basis.
+
+### Enforcing Communication Style: Personality, Not Word Lists
+
+The longest-running watcher lesson comes from the jargon-drift scanner — four enforcement designs in as many weeks:
+
+1. **Regex word list, blocking.** A Stop-hook scanned developer-facing prose for engineering vocabulary. It saturated — warning on 59% of turns while the behavior barely moved. When a blocking rule fires on most turns and nothing changes, the rule is de facto advisory; the fix is a different enforcement *mechanism*, not more nagging.
+2. **Enforce via personality.** The durable fix moved up the stack: an **output style** — a system-prompt-level instruction block that shapes every reply at generation time — plus a rule file that teaches by paired examples (drifted reply vs. fixed reply) instead of adjectives. Models follow shown examples far more reliably than they follow "be less technical."
+3. **Grade async, never post-display.** An LLM judge grading final replies stayed as a metric but was demoted from blocking within a week: a Stop hook fires *after* the reply renders, so a block there always forces a visible rewrite — the developer reads everything twice. Against a non-deterministic grader (which fails text it just passed), that can never converge; 66 forced rewrites in six days with no downward trend was the evidence.
+4. **Synchronous checks only where they earn their latency.** A pre-send self-check (draft → grade → revise silently → display once) survives for a handful of high-drift, low-frequency reports — session-end summaries — where a few seconds buys a single-read reply.
+
+The transferable rule: an output-quality gate must sit *before* display or *fully outside* the loop. A post-display blocker is the worst of both — full latency, visible rework, and the grader's noise becomes the developer's problem.
 
 ### Full Strength from Day One
 
@@ -720,6 +769,8 @@ The obvious deployment strategy for a new watcher is a soak: run it alarm-only f
 The reasoning: if your iteration loop is same-day (a misfire gets flagged in session and fixed within hours), a two-week probation buys nothing — and costs something real. A rule that exists but doesn't enforce *feels like a dumbed-down version of itself*, and you stop trusting that new rules mean anything. Under blocking, false positives announce themselves immediately and loudly — which is the detection mechanism, replacing the log-review step entirely.
 
 So: new watchers ship blocking on day one, with the loop guard and the kill switch. Misfires get fixed when they bite. Logs stay for tuning, not for earning promotion. The exception policy is deliberately empty: if a check is too noisy to fix same-day, the answer is to narrow the check, not to park it in alarm-only limbo.
+
+**Full strength is layer-relative.** "Strongest sane setting" depends on where the guard sits. For a pre-execution guard at an irreversibility boundary, that's blocking. For an inbound-content scanner, it's redaction in place — blocking after the content already landed protects nothing. For a post-display output grader, blocking is itself the misfire (see the voice-watcher story above): the strongest action available to that layer is async logging into a digest someone actually reads. Shipping full-strength means choosing the strongest action *available to that layer* — not blocking everywhere.
 
 ### Hook Liveness Audits
 
@@ -733,6 +784,8 @@ Two disciplines fall out of that:
 2. **Run a periodic liveness audit:** for every wired hook, check the evidence that it has ever fired outside tests — log entries, block records, alarm lines. "Armed but never fired" on a hook that *should* fire weekly is a red flag, not a comfort. Keep the audit as a permanent script, not a one-off.
 
 The complement is a **precision audit**: for watchers that *do* fire, periodically grade a sample of real fires as true/false positives. A watcher running at 90%+ false positives is teaching the model to ignore it — tune the pattern or narrow the scope.
+
+**The second failure class: built but never registered.** A guard rewritten into a new file — implemented, tested green in its own suite, documented, announced — changed nothing in production for two weeks, because all three registration sites (the live settings, an adapter config, a monitoring script) still invoked the old implementation. Every improvement was real except the wiring. It was the third incident of the class in a month (hook copies drifting from their canonical source; a stray symlink resurrecting retired rules; the unregistered rewrite), which earned a standing check: **a hook change isn't done until every registration site verifiably points at the new file — and the liveness audit greps the registry, not the directory.** Files on disk are inventory; registrations are behavior.
 
 ### Corrections Are Recall Tests
 
@@ -837,6 +890,8 @@ A zero-dependency bash script installed in `.git/hooks/pre-commit` that scans st
 5. Block the commit if any match is found
 
 > **Note:** Build your own scanning patterns rather than copying them from public repos — published regex patterns can be studied and evaded. The approach matters more than the specific implementation.
+
+Deny-list the bypass, too: `git commit --no-verify` skips the pre-commit hook entirely. The first real attempt to use it here was stopped only by a probabilistic auto-approval classifier — one classifier miss and the gate is silently gone. Red lines need a deterministic deny pattern; a classifier is backup, never the gate.
 
 ### False Positive Gates (for HIGH findings)
 
@@ -1095,6 +1150,13 @@ This survives context compaction because it's a hook, not a conversation instruc
 
 Periodically review proposals: add confirmed patterns, remove stale ones that haven't triggered in 30+ days. The pattern list evolves based on real misses, not theoretical coverage.
 
+### Shared-Repo and Live-System State Are Assumptions Too
+
+Two state classes go stale silently and get asserted as fact:
+
+- **Local clones of shared repos.** A clone of a repo other people push to is a snapshot, not the repo — this bit twice in one week (a document 94 files behind; a production repo 4 commits behind, right before a state-changing operation). The fix is mechanical: a guard blocks the first read of any shared-repo clone until a read-only fetch + lag report has run (with a freshness TTL so repeat reads don't re-pay it). If the clone is behind, answer from the remote refs or state the lag explicitly — never auto-pull.
+- **Live-system state from an earlier read.** What an admin dashboard, deploy panel, or store console showed an hour ago is not what it shows now. Re-check in the same turn, or label the claim "as of the earlier check." And for load-bearing data, confirm the exact field — a fuzzy match on a similar-looking value is how "verified" claims turn out wrong.
+
 ### Scope
 
 Only gate decisions that are **expensive to reverse** — cross-system integrations, external API calls, infrastructure state, business logic. Don't gate code-internal work, styling, refactoring within a module, or following an established pattern already verified this session.
@@ -1312,18 +1374,20 @@ Session logs record history (append-only, never edited). Handoff files record **
 | **Primary use** | Searching past decisions | Resuming work |
 | **Lifespan** | Permanent archive | Current until next session |
 
-Build the handoff file write into your session-end routine (e.g., `/save-and-move`), using the same conversation context that feeds the session log. The handoff file is just a richer, forward-looking extract of the same material.
+Build the handoff file write into your session-end routine (e.g., `/save-and-end`), using the same conversation context that feeds the session log. The handoff file is just a richer, forward-looking extract of the same material.
+
+Two save skills cover the two ways a session ends — one for *stopping* (`/save-and-end`: full save, session log, learning pipeline, done for the day) and one for *rotating* (`/clear-and-continue`: same task continues in a fresh context — write the handoff, commit it, clear). There used to be a third variant that also spawned a fresh terminal session; it was removed after months showed the spawn step was never used. A skill variant nobody invokes is inventory, not capability.
 
 ### Conditional Session-End Reminders
 
-A blunt "run /save-and-move at end of every session" rule trains you to ignore it on read-only sessions where there's nothing to save. Eventually you ignore it on the sessions that *did* need it, too. The fix: a `SessionEnd` hook that nudges *only when the trigger applies* — when the session produced commits and the session log file wasn't updated in the last hour.
+A blunt "run /save-and-end at end of every session" rule trains you to ignore it on read-only sessions where there's nothing to save. Eventually you ignore it on the sessions that *did* need it, too. The fix: a `SessionEnd` hook that nudges *only when the trigger applies* — when the session produced commits and the session log file wasn't updated in the last hour.
 
 ```bash
 # Pseudocode
 recent_commit  = git log --since="60 min ago" --oneline (across all tracked projects)
 log_updated    = git log --since="60 min ago" --oneline -- sessions/$(date +%Y-%m).md
 if recent_commit and not log_updated:
-  echo "💾 Recent commits detected but no /save-and-move entry today."
+  echo "💾 Recent commits detected but no /save-and-end entry today."
 ```
 
 The pattern generalises: every "remember to do X at the end" rule that's worth automating should fire only when the trigger actually applies. Always-on reminders become background noise. Conditional reminders stay credible.
@@ -1379,6 +1443,21 @@ What makes this work: every step has an explicit fallback. Hook fails → no con
 
 What this doesn't do: it doesn't merge across projects (each project's memory is self-contained), and it doesn't run on every save (the hook batches via a debounce file to avoid runaway costs). The point is incremental tidying, not aggressive rewriting.
 
+### Cross-Project Memory Recall
+
+Per-project memory silos keep sessions lean, but lessons get trapped: the gotcha discovered in project A is invisible when the same problem appears in project B. The bridge, without merging the silos:
+
+- **A manifest indexes every project's memory** — file name, one-line description, last-touched date — rebuilt periodically.
+- **A prompt-time hook surfaces candidates.** On each user message it matches the manifest against the prompt and injects at most a few one-line pointers ("possibly relevant memory in *other* projects: …") — never full content.
+- **A librarian pulls detail on demand.** If a pointer looks on-topic, a cheap subagent reads the actual memory file and returns only the relevant part. The main context never pays for cross-project content it didn't need.
+- **An explicit search skill** for "what do we know about X" — greps every project's silo and returns matches grouped by project, densest hit first.
+
+The design constraint throughout: pointers are cheap and always-on; content is expensive and on-demand.
+
+### Self-Retiring Facts
+
+Memory that only accumulates goes stale at the rate you write it. Beyond consolidation and staleness sweeps, facts can carry their own expiry in frontmatter: an *act-by* date fires a session-start alarm as the deadline approaches ("rotate the API token by the 15th"), and an *expires* date lets a sweep move the fact to a tombstone archive once it has passed. The sweep is deliberately conservative — anything with open checkboxes or unresolved references is exempt. The memory layer then maintains itself in both directions: merging duplicates and retiring the dead.
+
 ### Periodic Harness Audit
 
 Memory staleness is one axis; the harness itself drifts on others: new hook events ship, new model versions arrive, settings fields get added, published documentation claims start lagging reality. None of these surface in day-to-day work — you only notice when something breaks or when you happen to look.
@@ -1399,7 +1478,7 @@ Plus a drift section that explicitly compares live config against the developer'
 
 A SessionStart hook that counts uncommitted changes in your `~/.claude/` directory and warns if the number exceeds a threshold (e.g., 10 files). This catches configuration drift — skills, rules, hooks, and settings that were modified during work sessions but never committed.
 
-Without this, your local config silently diverges from what's in version control. The `/save-and-move` session-end routine should include a mandatory check for uncommitted config changes.
+Without this, your local config silently diverges from what's in version control. The `/save-and-end` session-end routine should include a mandatory check for uncommitted config changes.
 
 ### Data Persistence Tiers
 
@@ -1483,12 +1562,18 @@ Terminal output is a wall of monospace text. By the time a "your-turn" moment sc
 | 🟡 | **Caution / heads-up** | A tradeoff or thing-to-consider before a decision (softer than 🛑 — "think about this," not "stop") |
 | 🛑 | **Blocker / irreversible** | Hard stop, red line crossed, or expensive-to-undo cost line above the menu |
 | 🔵 | **Question awaiting answer** | When the AI stops and asks — the next message must be a reply, not another tool call |
+| 🚦 | **Decision-gate block** | Header of the task-opening question inventory (see [The Decision Gate](#the-decision-gate)) |
+| 🗺️ | **Impact-map stamp** | Precedes fix-shaped edits — the blast-radius map from [Fix Discipline](#fix-discipline), or an explicit "Not a fix" escape |
 
 The colors are deliberate: orange = your hands needed, green = safe go, yellow = think, red = stop, blue = your turn. All five render well on dark and light terminals. Use sparingly — every marker should be a real action moment, not decoration. If markers start appearing in routine status updates, they've become noise and the convention dies.
 
 ### Plain-English Decision Menus
 
 Even with a clean A/B/C structure, decision menus fail in a specific way: the **labels** describe what the AI does internally rather than what the developer (or the product, or the user) experiences. A label like "Refactor the cache layer to use a write-through pattern with TTL invalidation" is technically precise and almost useless as a decision aid — it forces re-reading and translation before a choice can be made.
+
+**Rule 0 — decide whether to ask at all.** Before presenting any menu, run the 90% test: would the developer pick the AI's recommendation 90%+ of the time *because it's right*? Then skip the menu — state the action and the override ("Doing X. Interrupt if you'd rather Y."). Rubber-stamp menus waste attention and signal the AI doesn't trust its own recommendation. A real menu is for genuinely competing tradeoff axes, irreversibility, high cost-of-being-wrong, or stakeholder context the AI can't infer. (Skipping the *ask* never means skipping the *show* — the pick still appears as a visible auto-decision in the gate block.)
+
+**Structural minimum on every menu that does render:** sequential letters (`A.` `B.` `C.`) on every option, and exactly one 🟢 on the recommendation — never zero, never two. The letters are how the developer replies ("go with B"); a menu without them is malformed. This sounds too obvious to state; it was the single most recurring formatting drift over months of real menus.
 
 Five rules turn jargon menus into scannable decision aids:
 
@@ -1539,7 +1624,7 @@ C. Aggressive cleanup — biggest win but higher risk of losing nuance.
 
 The good version is shorter, scannable, and a non-developer reader can pick without translation.
 
-**Self-check before posting any menu.** Outcome-first? 4–8 word headers? No internal jargon (file paths, flags, agent/hook names) in the labels? One tradeoff line per option? BLUF sentence above the menu? If any check fails, rewrite before posting.
+**Self-check before posting any menu.** Lettered options with exactly one 🟢? Outcome-first? 4–8 word headers? No internal jargon (file paths, flags, agent/hook names) in the labels? One tradeoff line per option? BLUF sentence above the menu? If any check fails, rewrite before posting.
 
 ### Red Lines
 
@@ -1580,7 +1665,7 @@ Risk:  <plain English — destructive? externally visible? reversible?>
 
 The 🔶 marker (your-hands-needed) makes it scannable. What/Why/Scope/Risk is the same structure as ask-first prompts, so the developer's mental model stays consistent.
 
-**Length cap — wrap long commands in a temp script.** If the command would exceed ~60 characters (half a terminal line), don't paste it inline. Write a self-contained script to `scripts/tmp-<short-name>.sh` and emit `! bash scripts/tmp-<short-name>.sh`. Long inline commands break across terminal lines and are awkward to copy-paste; a named script also leaves an artifact the developer can inspect or re-run.
+**Length cap — wrap long commands in a script.** If the command would exceed ~100 characters, don't paste it inline: once the terminal emulator wraps the line, copy-paste can carry the break and the command arrives corrupted. Write a self-contained script and emit `! bash /absolute/path/to/script.sh` — one short line that never wraps, plus an artifact the developer can inspect or re-run. A deterministic Stop-hook backstop measures every handed command line and blocks over-length handoffs (one of the checks that *stayed* blocking through the fleet recalibration — a length check can't be wrong about the match). Companion habit: prefix every handed command with `cd <absolute project path> && ` — the developer runs commands from whatever directory they happen to be in.
 
 **Backstop hook.** A PreToolUse hook (`preempt-self-run-guard.sh`) hard-blocks tool calls matching the known-deny categories and instructs the AI to re-emit as a self-run block. This catches regressions when the AI forgets the rule or a new variant slips through. The text rule is primary; the hook is a safety net.
 
@@ -1640,9 +1725,32 @@ A self-check fires at natural breakpoints: *3+ constraints? Just failed a fix? C
 | Critical evaluation | Best | Independent evaluator (anti-rationalization needs maximum reasoning) |
 | Multi-perspective synthesis | Best | Council chairman (reconciling contradictory arguments) |
 
-The evaluator is pinned to the best tier even when that *matches* the session model — the pin survives a future session-model change.
+The evaluator is pinned to the best tier even when that *matches* the session model — the pin survives a future session-model change. The invariant has a name worth keeping: **the skeptic is never weaker than the author.** When harder adversarial reasoning is needed, raise the skeptic's *effort*, in a fresh isolated context — don't hunt for a bigger model that doesn't exist.
 
 **Subagent cost discipline:** subagents are read-only or write-once — find information, review code, produce a report. Never delegate implementation loops (read → edit → test → iterate) to a subagent; the context re-reading makes token growth quadratic. And cap subagent prompts (~150 words for report tasks, ~250 for research) — verbose delegation prompts are pure overhead.
+
+### Temporary Model Windows
+
+Model availability shifts under you: a tier disappears provider-side for a while, or a stronger tier appears for a limited window. Both directions hit this system within a single month, and the same pattern absorbed both:
+
+- **Flip at the call-time layer, not the durable pins.** The session default and evaluator spawns move via a call-time model override; agent definition files stay pinned to the steady-state tier, so nothing breaks the day the window closes.
+- **Arm a dated revert where it can't be forgotten.** The expiry instruction ("flip the pin back on <date>") lives in the persistent memory continuation — the one file guaranteed to be re-read after any context reset — not in conversation, and not only in a human's head.
+- **The skeptic invariant travels.** If the session steps up for a window, evaluator and adversarial spawns step up with it — never below the session.
+
+### Multi-Agent Orchestration: Targeted, Not Default
+
+Multi-agent workflow fan-outs — parallel investigators, adversarial verification panels, judge pools — are powerful and expensive: a full fan-out runs 4–15× the tokens and adds minutes of wall clock versus staying solo. Running one on every task is the multi-agent version of paying frontier prices for mechanical turns. The routing rule that survived contact with real usage:
+
+**Fan out when the task is:**
+
+- **Wide** — reading, searching, or transforming across ~5+ files or a whole repo (audits, migrations, inventories)
+- **High-stakes** — security surfaces, irreversible actions, anything external-facing where being wrong is expensive
+- **Research or open-ended synthesis** — multiple independent search angles beat one context's tunnel vision
+- **Adversarial verification of substantial work** — often ONE skeptic in a fresh context, not a panel
+
+**Stay solo, with calibrated effort, for everything else:** single-file edits, config, git operations, plan-following, status checks, known-target search.
+
+Two things stay always-on regardless of fan-out: independent verification of substantial changes (a fresh-context reviewer is the cheap layer that catches most real bugs) and the effort knob. The hybrid shape is often right: scout inline first to discover the work-list, *then* orchestrate over it — you don't need to know the shape of the task before starting, only before the fan-out step. When a task is borderline, name the cost and let the developer pick.
 
 ### Mechanical Enforcement
 
@@ -1693,10 +1801,10 @@ Skills are markdown-defined workflows that get loaded into context when invoked.
 **Session Management:**
 | Skill | Purpose |
 |-------|---------|
-| `/save-and-move` | Save progress, run learning pipeline, generate continuation prompt; spawn fresh session |
-| `/save-and-end` | End-of-day variant — save artifacts, no new session spawned |
+| `/save-and-end` | End-of-day save — session log, handoff, learning/memory pipeline; no new session |
 | `/clear-and-continue` | Mid-session context rotation — same task, same project, fresh context (drops handoff + ends with `Then run: /clear`) |
 | `/memory-audit` | Detect stale references in knowledge files |
+| `/memory-search` | Cross-project recall — grep every project's memory silo, grouped by hit density |
 | `/memory-consolidate` | Auto-merge near-duplicate memory files via subagent decisions; snapshot + reversible archive |
 | `/memory-staleness` | Fleet-wide sweep: verify every project's active TODOs against its git history |
 | `/plan-sprint` | Sprint planning with security posture check |
@@ -1720,6 +1828,16 @@ When starting UI work on a project with no established visual direction, the des
 
 This prevents the "generic Bootstrap look" that AI-generated UIs tend toward.
 
+### Skills for Working Inside a Team
+
+Most of this document assumes solo repos. Adapting the harness to repositories a team owns produced three patterns of its own:
+
+1. **Re-derive the team's process live, every run.** A PR-preparation coach skill re-reads the team's documented ways of working (contributing guides, PR templates, branch conventions, which review bots run) at run time instead of baking them into the skill body. Team process changes faster than skill files — a coach confidently following a stale process is worse than no coach.
+2. **Babysit open PRs daily.** A scan skill walks every open PR: red CI triaged same-day, new review comments answered or routed, bot false positives rebutted with evidence, stalled PRs nudged, the dependency chain between PRs surfaced. The failure it prevents is silent rot — a PR sitting red or unanswered in public for days.
+3. **Keep a verdict ledger.** Every resolved review thread appends one line: the finding, its source (human or bot), and the outcome (accepted / rejected / fixed). The ledger feeds *back*: pre-submission evaluation cites prior team rulings as precedent, and approach selection avoids shapes the team has already rejected. Reviews stop being one-shot events and become accumulated case law — worth writing each row precisely enough to cite later.
+
+All GitHub *writes* stay manual (see [Red Lines](#red-lines)): the skills prepare branches, commits, and reply text; the developer runs the actual PR commands.
+
 ### Plugins: Third-Party Skill Packs
 
 Plugins extend Claude Code with curated skill sets from the community:
@@ -1730,8 +1848,10 @@ Plugins extend Claude Code with curated skill sets from the community:
 | **pr-review-toolkit** | PR review, comment analysis, silent failure hunting, type design analysis |
 | **hookify** | Create and manage hook rules from conversation analysis |
 | **skill-creator** | Create, modify, and benchmark custom skills |
-| **frontend-design** | Creative, production-grade UI design guidance |
-| **claude-md-management** | Audit and improve CLAUDE.md files |
+| **context7** | Live library-documentation lookup (current docs beat training data) |
+| **figma** | Design file access and design-to-code workflows |
+
+Prune the list periodically: a usage audit here disabled three plugins that had never fired in months of sessions. Every enabled plugin ships its skill descriptions into context — an unused plugin is a standing tax with no return.
 
 ### Building Your Own Skills
 
@@ -1793,7 +1913,8 @@ Context-switching between tools breaks flow. Checking deployment status in one b
 ~/.claude/
 ├── CLAUDE.md              # Global preferences, standards, red lines
 ├── settings.json          # Hooks, permissions, deny rules
-├── corrections.md         # Correction capture log (processed by /save-and-move)
+├── corrections.md         # Correction capture log (processed by /save-and-end)
+├── output-styles/         # Active output style — voice enforced at the system-prompt layer
 ├── agents/                # Custom agent definitions (8 agents)
 │   ├── evaluator.md              # Independent functional tester (best model)
 │   ├── post-evaluate-reviewer.md # Code review after /evaluate passes (mid-tier; renamed from code-reviewer to disambiguate from plugin agents)
@@ -1802,7 +1923,7 @@ Context-switching between tools breaks flow. Checking deployment status in one b
 │   ├── quick-verify.md           # Parallel verification runner — invoked synchronously by deploy-verification + fix-discipline rules
 │   ├── push-gate-reviewer.md     # Pre-push soft-check gate agent (cheap)
 │   ├── plan-step-readiness.md    # Plan-step gate on `[~]→[x]` checkbox transitions (mid-tier)
-│   └── session-scanner.md        # Parses session state for save-and-move (cheapest)
+│   └── session-scanner.md        # Parses session state for the session-end save (cheapest)
 ├── hooks/                 # Hook scripts (15+ scripts across event types)
 │   ├── assumption-check.sh        # Layer 3: nudge on external-system files
 │   ├── assumption-check-patterns.txt  # Pattern list (self-calibrating)
@@ -1819,7 +1940,7 @@ Context-switching between tools breaks flow. Checking deployment status in one b
 │   ├── deploy-check/      # Pre-deployment checklist
 │   ├── plan-sprint/       # Sprint planning
 │   ├── security-audit/    # Comprehensive security audit
-│   ├── save-and-move/     # Session save + learning pipeline + pattern collection
+│   ├── save-and-end/      # Session save + learning pipeline + pattern collection
 │   ├── memory-audit/      # Staleness detection for knowledge files
 │   ├── council/           # Multi-perspective decision council
 │   ├── design-discovery/  # Visual design exploration
@@ -1901,6 +2022,8 @@ The pattern:
 
 **Companion pattern — whitelist to reduce false-block friction.** A guard that blocks *all* compound commands (`&&`, `|`, subshells) teaches the developer to work around it by writing temp scripts — but the whole point of the guard was to prevent permission-prompt spam, and single-pipe-to-read-only-filter cases (`ls | head`, `cat x | jq`) are already in most allow-lists. Refine the guard to allow those exact cases; block only the compound operators that actually trigger prompts. Blunt guards get ignored or disabled; surgical guards get respected.
 
+The refinement here eventually matured into a full read-only-command model: read-only pipelines of any length pass, and `;`/`&&` chains pass when every segment is a simple read-only command — including read-only `git` subcommands, parsed past their global flags. Anything containing a mutator, a subshell, a file redirect — or structure the parser can't be certain about, like a pipeline nested inside a chain — still splits; when in doubt, the guard stays conservative. Two lessons from hardening it under adversarial review: operator detection must be space-agnostic (`ls;rm` is exactly as compound as `ls ; rm`), and a blanket allowance for "it's just a script run" is a bypass (`bash x.sh; rm -rf y` sails through on the script's reputation).
+
 **Terminal feedback via `terminalSequence`** (Claude Code v2.1.141+). Hooks can return a top-level `terminalSequence` field in their JSON output containing raw ANSI escape sequences — Claude Code emits them through the terminal write path (race-free, works under tmux/screen). High-value targets: desktop notifications when something fires while the developer is away from the terminal (auto-rotation, long-build completion, deploy verification result), and dynamic window titles that encode session state (current project, plan checkpoint, evaluation status).
 
 Concrete shape — auto-rotation hook example:
@@ -1935,24 +2058,24 @@ Note the scope: parallel evidence applies to **replacements**, where the old hoo
 | Fix Reviewer | Mid-tier | Post-fix blast radius review — checks root cause coverage and caller impact |
 | Plan-Step Readiness | Mid-tier | Fires on `[~]→[x]` plan flip; verifies next task is unblocked, returns PROCEED\|HALT |
 | Push Gate Reviewer | Cheapest | Pre-push soft checks (vague commit, scope drift, infra-file flag); replaces the "push now?" rubber-stamp |
-| Parallel Audit | Mid-tier | Multi-project security scanning across active projects |
 | Quick Verify | Mid-tier | Parallel multi-criteria verification |
-| Context Gatherer | Cheapest | Session start context loading |
-| Session Scanner | Cheapest | Parses session state files (corrections, pending log) for the save-and-move skill |
+| Session Scanner | Cheapest | Parses session state files (corrections, pending log) for the session-end save skill |
 
 ### Numbers at a Glance
 
 | Component | Count |
 |-----------|-------|
-| Allow rules | ~170 |
+| Allow rules | ~180 |
 | Deny rules | ~70 |
-| Hooks | ~65 scripts across 9+ event types, ~28 of them blocking (all routed through the quiet JSON channel) |
-| Behavioral output watchers | ~15 Stop-hook scanners on the AI's own output |
-| Skills | ~33 custom + ~50 via plugins |
-| Agents | 9 custom definitions |
-| Rules | ~47 files — ~27 always-on (post-diet), ~20 path-scoped |
-| Plugins | ~25 enabled |
-| MCP servers | 8-10 connected |
+| Hooks | ~84 registrations (81 unique — ~75 scripts + 6 inline) across 10 event types |
+| — hard-blocking | 26 — deterministic guards at irreversibility boundaries (routed through the quiet JSON channel) |
+| — quiet drift metrics | 9 behavioral Stop-hook scanners, log-only since the recalibration |
+| — informational / context-inject | ~46 — orientation, freshness checks, reminders, auto-redaction |
+| Skills | ~38 custom + dozens via plugins |
+| Agents | 8 custom definitions |
+| Rules | ~55 files — ~30 always-on, the rest path-scoped or on-demand |
+| Plugins | ~9 enabled (of ~23 installed) |
+| MCP servers | ~10 connected |
 
 ### Adoption Guide
 
@@ -1961,7 +2084,7 @@ Note the scope: parallel evidence applies to **replacements**, where the old hoo
    - Shipping bugs? → [Generator-evaluator pattern](#the-generator-evaluator-pattern)
    - Fixes causing regressions? → [Fix discipline](#fix-discipline)
    - Security gaps? → [10-stage lifecycle](#the-10-stage-security-lifecycle)
-   - Wasting on models? → [Model routing](#model-routing)
+   - Wasting on models? → [Model & effort routing](#model--effort-routing)
    - Same mistakes repeating? → [Correction capture](#correction-capture)
    - Performance unknown? → [Performance audit](#performance-audit)
    - Scope creep during fixes? → [Scope flagging](#scope-flagging)
@@ -1990,8 +2113,11 @@ A methodology that only ever adds patterns isn't being tested against reality. T
 | **Manual confirmation before the post-rotation commit** | Auto-commit with an opt-out flag | Zero refusals over months of use. A confirmation that's never declined is a ritual, not a gate. |
 | **Rubber-stamp asks at transitions** ("Push now?", "Fix all 7?") | [Gate agents](#gate-agents-at-workflow-transitions) | Same diagnosis: 100% "yes" rates mean the question verifies nothing. A cheap agent does the actual verification instead. |
 | **Per-tool blocklists on a leaking MCP server** | [Whitelist-by-default](#the-secret-defense-stack-four-layers-plus-two-guards) | Each leak patched one tool; the next leak came through a different one. Block-by-default ended the class. |
+| **Blocking watchers on judgment-flavored rules** | [Quiet drift metrics + prompt-layer steering](#the-mid-2026-recalibration-block-only-at-unrecoverable-harm) | Taste-grading blocks re-imposed the latency the fleet existed to remove, and false-positive rates on judgment calls never converged. Blocking is now reserved for deterministic checks at unrecoverable harm. |
+| **Word-list voice detector as a blocker** | [Output style + exemplars + async LLM grading](#enforcing-communication-style-personality-not-word-lists) | Saturated at 59% of turns — word lists measure symptoms, not framing. Enforcement moved to the system-prompt layer; the regex stayed as a trend metric. |
+| **A third save skill that also spawned a fresh session** | Two save skills: rotate (`/clear-and-continue`) vs. end (`/save-and-end`) | The spawn step was never used over months. A skill variant nobody invokes is inventory, not capability. |
 
-The meta-pattern across all six: **a checkpoint that never changes the outcome is friction wearing a safety costume.** Measure refusal rates and catch rates; when they're zero over months, replace the human ask with mechanical verification — and spend the human's attention where it actually changes outcomes.
+The meta-pattern across the first six: **a checkpoint that never changes the outcome is friction wearing a safety costume.** Measure refusal rates and catch rates; when they're zero over months, replace the human ask with mechanical verification — and spend the human's attention where it actually changes outcomes. The later retirements add a second meta-pattern: **the enforcement layer must match the failure mode** — blocks for irreversibility and determinism, steering and measurement for taste.
 
 ---
 
@@ -2020,7 +2146,7 @@ A minimal CLAUDE.md you can drop into any project today. It covers the highest-v
 ## Planning
 - Non-trivial features: plan before coding (docs/plans/YYYY-MM-DD-feature.md)
 - Plans use checkboxes: - [ ] pending, - [~] in progress, - [x] done
-- Execute in batches of 3 tasks, pause for review between batches
+- Surface all decisions before starting; then execute autonomously (no mid-plan check-ins)
 
 ## Fix Discipline
 - Before every fix: map blast radius (epicenter → callers → callees → tests)
